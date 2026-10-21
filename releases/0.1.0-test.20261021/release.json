@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.0-test.20261021",
+  "probeVersion": "0.1.0",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:54740f42bbc9c9b794633a1f8e6707c82b8339c65113f8b870ca8410a5f16f08",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-10-21T10:02:05Z",
+  "expiresAt": "2026-10-28T10:02:05Z",
+  "sourceRevision": "a72b19dcd82658d8728900c3e56e54b477b732f6",
+  "changes": [
+    "A/B実機試験用の候補版。一般配布の受入試験は未完了。",
+    "任意参加・手動更新・ローカル資源上限・期限付き割当てに対応。",
+    "amd64のみ。arm64は未検証のため対象外。",
+    "旧A/Bとは別の専用Compose・専用データで試験し、旧イメージとデータを保持する。"
+  ]
+}

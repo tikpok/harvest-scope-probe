@@ -25,3 +25,5 @@ __pycache__/
 *.p8
 *.log
 !/release-public.pem
+!/releases/0.1.0-test.20261021/release.json
+!/releases/0.1.0-test.20261021/release.sig
