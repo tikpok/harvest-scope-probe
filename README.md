@@ -17,3 +17,9 @@ docker build -t harvest-scope-community-probe:local .
 ```
 
 コンテナは `PROBE_MODE=community` で起動します。Compose は検証済み digest を `.env.community` の `PROBE_IMAGE` に指定する方式で、イメージの取得や更新を自動では行いません。
+
+配布情報の署名は [release-public.pem](release-public.pem) で検証します。初回は、運営から別経路で受け取った公開鍵の指紋と照合してください。公開鍵のDER表現のSHA-256は次の値です。
+
+```text
+b0792a1a7712145c21ece1756131993a4b2a690df381b06c81d02956891cf12b
+```

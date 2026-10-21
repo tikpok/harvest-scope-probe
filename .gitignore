@@ -24,3 +24,4 @@ __pycache__/
 *.pkcs8
 *.p8
 *.log
+!/release-public.pem
