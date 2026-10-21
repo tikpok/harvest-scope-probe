@@ -1,0 +1,44 @@
+name: harvest-scope-community-probe
+services:
+  probe:
+    # 検証したdigestを.envで指定し、docker pullは参加者が手動で実行する。
+    image: ${PROBE_IMAGE:?set a verified registry/image@sha256 digest}
+    pull_policy: never
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PROBE_MODE: community
+      CENTRAL_API_URL: ${CENTRAL_API_URL:?set Central HTTPS URL}
+      COMMUNITY_STATE_DIR: /var/lib/monitor-probe/community
+      COMMUNITY_LIMITS_PATH: /etc/monitor-probe/limits.json
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - community-data:/var/lib/monitor-probe
+      - ${COMMUNITY_LIMITS_FILE:-./community-limits.json}:/etc/monitor-probe/limits.json:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cpus: ${COMMUNITY_CPUS:-0.10}
+    mem_limit: ${COMMUNITY_MEMORY:-256m}
+    # メモリ+swapの合計をメモリ上限と同じにして追加swapを禁止する。
+    memswap_limit: ${COMMUNITY_MEMORY:-256m}
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    stop_grace_period: 15s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/monitor-probe", "--healthcheck"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  community-data:

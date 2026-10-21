@@ -1,0 +1,13 @@
+*
+!Cargo.toml
+!Cargo.lock
+!LICENSE
+!crates
+!crates/monitor-core
+!crates/monitor-core/Cargo.toml
+!crates/monitor-core/src
+!crates/monitor-core/src/**
+!crates/monitor-probe
+!crates/monitor-probe/Cargo.toml
+!crates/monitor-probe/src
+!crates/monitor-probe/src/**

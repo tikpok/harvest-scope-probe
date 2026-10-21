@@ -1,0 +1,11 @@
+{
+  "cpuCores": 0.1,
+  "limits": {
+    "maxConcurrency": 1,
+    "requestsPerSecond": 0.2,
+    "burst": 1,
+    "dailyTrafficBytes": 104857600,
+    "spoolBytes": 104857600
+  },
+  "maxMemoryBytes": 268435456
+}
