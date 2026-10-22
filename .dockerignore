@@ -11,3 +11,7 @@
 !crates/monitor-probe/Cargo.toml
 !crates/monitor-probe/src
 !crates/monitor-probe/src/**
+!crates/monitor-core/tests
+!crates/monitor-core/tests/**
+!crates/monitor-probe/tests
+!crates/monitor-probe/tests/**

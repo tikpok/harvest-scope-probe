@@ -1,0 +1,46 @@
+name: Publish tested Probe image
+
+on:
+  push:
+    tags:
+      - '0.*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Check out the exact source commit
+        run: |
+          git init .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+      - name: Check release tools
+        run: python3 -m unittest discover -s scripts/tests -p 'test_community_*.py'
+      - name: Build and run Rust tests
+        run: |
+          docker build --pull --platform linux/amd64 \
+            --build-arg SOURCE_REVISION="$GITHUB_SHA" \
+            --tag "$IMAGE:$GITHUB_REF_NAME" .
+      - name: Check offline startup with production restrictions
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --tmpfs /var/lib/monitor-probe:rw,noexec,nosuid,size=16m,uid=10001,gid=10001 \
+            "$IMAGE:$GITHUB_REF_NAME" --status
+      - name: Publish immutable release image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/probe-docker-auth"
+          mkdir -m 700 "$DOCKER_CONFIG"
+          trap 'docker logout ghcr.io; rm -f "$DOCKER_CONFIG/config.json"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$GITHUB_REF_NAME"

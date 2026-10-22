@@ -24,10 +24,18 @@ docker build -t harvest-scope-community-probe:local .
 b0792a1a7712145c21ece1756131993a4b2a690df381b06c81d02956891cf12b
 ```
 
-A/B実機試験用の候補版は `0.1.0-test.20261021` です。[署名済み配布情報](releases/0.1.0-test.20261021/release.json) と [署名](releases/0.1.0-test.20261021/release.sig) を使用し、次のコマンドで検証します。実行ファイルが通知する版は `0.1.0`、対応プロトコルは v2 です。
+**証明書更新の注意:** `0.1.0-test.20261021` はeMudhraの不信任対応前です。新規導入・通常更新には使用せず、修正版の署名付き配布情報を使用してください。
+
+参考として、旧A/B実機試験用の候補版は `0.1.0-test.20261021` です。[署名済み配布情報](releases/0.1.0-test.20261021/release.json) と [署名](releases/0.1.0-test.20261021/release.sig) を使用し、次のコマンドで検証します。実行ファイルが通知する版は `0.1.0`、対応プロトコルは v2 です。
 
 ```sh
 python3 scripts/community-release.py releases/0.1.0-test.20261021/release.json releases/0.1.0-test.20261021/release.sig release-public.pem --platform linux/amd64
 ```
 
 一般配布の受入試験は未完了です。旧A/Bのイメージ・設定・データを保持し、別の専用Composeで試験してください。更新・復旧は[参加者向け手順](docs/participant.md#手動更新手動復旧)のとおり、検証したdigestを指定して手動で行います。
+
+## 証明書対策と配布ビルド
+
+`rustls-webpki 0.103.16` と `webpki-roots 1.0.10` を使用し、問題の12種類の証明書チェーンを拒否するオフライン回帰テストと、正常な証明書の検証を追加しました。コンテナのOS証明書も更新しています。ホストOSの更新だけでは、既存Probeの実行ファイルに組み込まれたCA情報は変わりません。
+
+`0.*` タグの公開時にGitHub Actionsがamd64イメージをビルドします。Rust・配布ツールのテストと、外部通信を禁止した非root・読み取り専用での起動確認が成功した場合だけGHCRへ公開します。署名鍵はActionsへ渡しません。公開後にimage digestとビルド元コミットを確定し、既存の信頼済み鍵で配布情報を署名します。参加端末の更新は引き続き手動です。
