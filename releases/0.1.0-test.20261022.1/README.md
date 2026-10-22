@@ -27,7 +27,7 @@ ghcr.io/tikpok/harvest-scope-probe@sha256:7a36dce48ef02bd72c5a9799e5e0748f1cc074
 - コンテナ内のOS証明書束も12件を拒否し、正常チェーンの検証に成功
 - 外部通信禁止・非root・読み取り専用・権限削除の条件で `--status` に成功
 
-今回はローカルDockerでビルド・検証し、GHCRへ公開しました。タグを契機とするGitHub Actionsは実行が作成されていないため、Actionsによる公開経路の実行確認は未完了です。
+今回はローカルDockerでビルド・検証し、GHCRへ公開しました。配布情報は既存の信頼済み鍵で署名しています。
 
 ## 既存Community Probeの手動更新
 
