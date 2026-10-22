@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.0-test.20261022.3",
+  "probeVersion": "0.1.0",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:dc8d6ddec963167ea7ef6ab5e7aaf951ce7d4e09a86e54fc72903ea577966cf4",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-10-22T12:14:20Z",
+  "expiresAt": "2026-10-29T12:14:20Z",
+  "sourceRevision": "ea4478fce0f2c4c9e147b065ea10f461fa6111c7",
+  "changes": [
+    "NIS1 Supernode単独検査に固定提供元nem.ioを最大4要求・貸出上限内で許可。公開IP・同一オリジン制限を維持。",
+    "Central側で公開ws/wssの登録済み接続先を使用。Supernodeには全Community Probe共通の256要求単位・保守的な10分窓の予約制限を適用。",
+    "実機Aの約1時間の保守的な予算消費が約14GiB/日相当のため、既定予算を5から20GiB/日へ見直し。実転送量とは区別し、終日稼働の保証とは扱わない。",
+    "CPU0.2・448MiB・追加swapなし・同時4件・毎秒3要求・burst4・保存枠100MiBを維持。既存のローカル設定は自動変更せず、各項目を個別調整可能。",
+    "配布イメージのRust248件・Python11件、Central専用DBのcommunity7件が成功。2台350対象の模擬5564受領を約118秒で完了。Supernodeは提供元枠により後続へ延期し、全検査の網羅完了とは扱わない。",
+    "eMudhra対策と12チェーン拒否試験を維持。amd64向け試験版、実行時版0.1.0・プロトコルv2・状態互換。手動更新のみ。arm64・2台の継続受入・旧A/B停止・公開判定切替は未完了。"
+  ]
+}
