@@ -6,7 +6,7 @@ Harvest Scope の観測に任意で参加する Probe の配布候補です。�
 
 対象は Linux 上の Docker Compose（amd64／arm64）です。署名済み配布情報とイメージ digest の検証、手動での導入・更新・撤退手順は [参加者向け手順](docs/participant.md) に記載しています。Probe は非 root ユーザーで動作し、受信用ポートや Docker ソケットを使いません。標準の資源上限は CPU 0.2 コア、メモリ448MiB（追加swapなし）です。旧A/Bと同じ同時4件、毎秒3要求・burst 4へ引き上げ、通信予算は5GiB/日、未送信データ枠は100MiBとしました。参加者が手元の設定で各項目を個別に増減できます。既存の設定を自動で書き換えることはありません。
 
-この既定値は2026年10月22日の処理能力見直しを反映したソースの値です。下記の公開済み証明書対策版だけを取得しても、新しい実行処理は入りません。対応する次の試験配布版を手動で導入してください。最小2台で従来相当の監視を維持することが目標で、採用済みの異なる観測元2台が必要です。実機での継続処理能力は受入試験で確認します。
+この既定値は試験配布版 `0.1.0-test.20261022.2` 以降の値です。以前の版では新しい実行処理は入りません。最小2台で従来相当の監視を維持することが目標で、採用済みの異なる観測元2台が必要です。実機での継続処理能力は受入試験で確認します。
 
 利用条件は [参加用途限定ライセンス](LICENSE) です。Harvest Scopeへの参加に必要な複製・ビルド・実行と、ローカル設定の変更を許可します。参加・停止・撤退は任意で、稼働保証・障害対応・ログ提出は求めません。一般的なソースコード改変や第三者への再配布を許可するライセンスではありません。Centralの利用許諾には適用しません。
 
@@ -26,10 +26,10 @@ docker build -t harvest-scope-community-probe:local .
 b0792a1a7712145c21ece1756131993a4b2a690df381b06c81d02956891cf12b
 ```
 
-修正版の試験配布版は **`0.1.0-test.20261022.1`** です。[配布情報](releases/0.1.0-test.20261022.1/release.json)、[署名](releases/0.1.0-test.20261022.1/release.sig)、[更新手順と検証結果](releases/0.1.0-test.20261022.1/README.md) を公開しています。実行ファイルが通知する版は既存Centralとの互換性のため `0.1.0`、対応プロトコルは v2 のままです。更新済みかどうかはイメージdigestで確認してください。
+現在の試験配布版は **`0.1.0-test.20261022.2`** です。eMudhra証明書対策に処理能力の見直しを重ねています。[配布情報](releases/0.1.0-test.20261022.2/release.json)、[署名](releases/0.1.0-test.20261022.2/release.sig)、[更新手順と検証結果](releases/0.1.0-test.20261022.2/README.md) を公開しています。実行ファイルが通知する版は既存Centralとの互換性のため `0.1.0`、対応プロトコルは v2 のままです。更新済みかどうかはイメージdigestで確認してください。
 
 ```sh
-python3 scripts/community-release.py releases/0.1.0-test.20261022.1/release.json releases/0.1.0-test.20261022.1/release.sig release-public.pem --platform linux/amd64
+python3 scripts/community-release.py releases/0.1.0-test.20261022.2/release.json releases/0.1.0-test.20261022.2/release.sig release-public.pem --platform linux/amd64
 ```
 
 **旧試験版 `0.1.0-test.20261021` はeMudhraの不信任対策前です。新規導入・通常更新には修正版を使用してください。** 旧配布情報と署名は履歴として保持しています。

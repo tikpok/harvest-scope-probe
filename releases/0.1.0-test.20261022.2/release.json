@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.0-test.20261022.2",
+  "probeVersion": "0.1.0",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:29037a6612c51a41607c7b5b755153b437a826005085580d74d0f7d83d8d7e81",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-10-22T06:11:41Z",
+  "expiresAt": "2026-10-29T06:11:41Z",
+  "sourceRevision": "8607451a2b4218069f3ea67de6f7c001679330c5",
+  "changes": [
+    "eMudhra対策済みの版へ合流。rustls-webpki 0.103.16・webpki-roots 1.0.10・OS証明書更新と12チェーン拒否の回帰試験を維持。",
+    "旧A/B相当を既定に変更: CPU 0.2、448MiB、同時4件、3要求/秒、burst 4、5GiB/日。追加swapなし、未送信結果100MiB。全項目を参加者が個別に増減可能。",
+    "Central通信中も検査を進め、完了後に空き枠通知・結果送信・再貸出を即時実行。資源監視の15秒周期は維持。",
+    "Rustテスト247件、Python11件、制限付きイメージの設定確認に成功。Centralは2台・350対象の模擬観測5700件を約104秒で受領。",
+    "プロトコルv2・実行時版0.1.0・既存の状態形式を維持。ローカル設定は自動変更しないため、旧100MiB/日などは参加者が明示的に変更する。",
+    "amd64向け試験版。arm64と実機2台の継続運転の受入は未完了。手動更新・復旧のみ。復旧先にはeMudhra対応済み20261022.1を使用可能。"
+  ]
+}
