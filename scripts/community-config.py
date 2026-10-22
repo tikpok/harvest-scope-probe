@@ -7,19 +7,19 @@ from pathlib import Path
 
 
 def render(config):
-    cpu = config.get('cpuCores', 0.1)
-    memory = config.get('maxMemoryBytes', 268435456)
+    cpu = config.get('cpuCores', 0.2)
+    memory = config.get('maxMemoryBytes', 469762048)
     if isinstance(cpu, bool) or not isinstance(cpu, (int, float)) or not math.isfinite(cpu) or cpu <= 0:
         raise ValueError('cpuCores は正の有限数で指定してください')
     if isinstance(memory, bool) or not isinstance(memory, int) or memory < 33554432:
         raise ValueError('maxMemoryBytes は32MiB以上の整数で指定してください')
     limits = config.get('limits', {})
-    for key, default in [('maxConcurrency', 1), ('burst', 1), ('dailyTrafficBytes', 104857600), ('spoolBytes', 104857600)]:
+    for key, default in [('maxConcurrency', 4), ('burst', 4), ('dailyTrafficBytes', 5368709120), ('spoolBytes', 104857600)]:
         value = limits.get(key, default)
         ceiling = 65535 if key in ('maxConcurrency', 'burst') else 9223372036854775807
         if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= ceiling:
             raise ValueError(f'{key} の上限が不正です')
-    rate = limits.get('requestsPerSecond', 0.2)
+    rate = limits.get('requestsPerSecond', 3.0)
     if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate <= 0:
         raise ValueError('requestsPerSecond は正の有限数で指定してください')
     return f'COMMUNITY_CPUS={cpu:.6f}\nCOMMUNITY_MEMORY={memory}\n'

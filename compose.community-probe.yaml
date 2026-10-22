@@ -21,10 +21,10 @@ services:
       - ${COMMUNITY_LIMITS_FILE:-./community-limits.json}:/etc/monitor-probe/limits.json:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
-    cpus: ${COMMUNITY_CPUS:-0.10}
-    mem_limit: ${COMMUNITY_MEMORY:-256m}
+    cpus: ${COMMUNITY_CPUS:-0.20}
+    mem_limit: ${COMMUNITY_MEMORY:-448m}
     # メモリ+swapの合計をメモリ上限と同じにして追加swapを禁止する。
-    memswap_limit: ${COMMUNITY_MEMORY:-256m}
+    memswap_limit: ${COMMUNITY_MEMORY:-448m}
     pids_limit: 64
     logging:
       driver: json-file

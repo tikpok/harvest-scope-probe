@@ -57,13 +57,13 @@ pub struct LocalConfig {
     pub max_memory_bytes: u64,
 }
 fn default_cpu_cores() -> f64 {
-    0.1
+    0.2
 }
 fn default_cpu_percent() -> u8 {
     70
 }
 fn default_memory_bytes() -> u64 {
-    256 * 1024 * 1024
+    448 * 1024 * 1024
 }
 impl Default for LocalConfig {
     fn default() -> Self {
@@ -546,14 +546,14 @@ pub async fn run(args: Vec<String>) -> Result<()> {
     let mut pressure_gate = crate::pressure::PressureGate::default();
     let mut previous_pressure = None;
     let processing = async {
-        use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
-        let mut jobs = FuturesUnordered::new();
-        let mut ticker = tokio::time::interval(Duration::from_secs(15));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        use crate::community_work::{WorkEvent, WorkQueue};
+        let mut jobs = WorkQueue::new();
         let mut heartbeat_due = std::time::Instant::now();
+        let mut status_due = std::time::Instant::now();
+        let mut resource_sampler = ResourceSampler::default();
         loop {
-            tokio::select! {
-                Some(completed) = jobs.next(), if !jobs.is_empty() => {
+            match jobs.next_event().await? {
+                WorkEvent::Completed(completed) => {
                     let (lease_id, expires_at, result): (String, DateTime<Utc>, Result<Option<ResultBatch>>) = completed;
                     if !membership_active(&state_path, &state) { break; }
                     match result {
@@ -570,7 +570,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                     }
                     heartbeat_due = std::time::Instant::now();
                 }
-                _ = ticker.tick() => {
+                WorkEvent::Poll => {
                     // An explicit --leave in a second process must also stop this worker.
                     if !membership_active(&state_path, &state) { break; }
                     write_runtime(&state_dir, &state, "authentication_pending", jobs.len(), &spool, &ledger).await?;
@@ -613,7 +613,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                     let access = &token.as_ref().expect("authenticated above").access_token;
                     let remaining=config.limits.daily_traffic_bytes.saturating_sub(ledger.used().await?);
                     let stats=spool.stats().await?;
-                    let resources=resource_pressure(&config,&mut previous_cpu,&mut pressure_gate);
+                    let resources=resource_sampler.sample(|| resource_pressure(&config,&mut previous_cpu,&mut pressure_gate));
                     let pressure=resources.paused;
                     if previous_pressure!=Some(pressure) {tracing::info!(?resources,"community resource admission changed");previous_pressure=Some(pressure);}
                     let room=spool_has_room(stats.spool_bytes,jobs.len(),config.limits.spool_bytes);
@@ -631,10 +631,13 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                         write_runtime(&state_dir,&state,"traffic_budget",jobs.len(),&spool,&ledger).await?;
                         continue;
                     }
-                    if std::time::Instant::now()>=heartbeat_due {
+                    if std::time::Instant::now()>=status_due {
                         if let Ok(server_status)=api.request::<serde_json::Value,()>(Method::GET,"status",Some(access),None).await {
                             atomic_write_private(&state_dir.join("server-status.json"),&serde_json::to_vec(&server_status)?)?;
                         }
+                        status_due=std::time::Instant::now()+Duration::from_secs(60);
+                    }
+                    if std::time::Instant::now()>=heartbeat_due {
                         let heartbeat=HeartbeatRequest{version:VERSION.into(),limits:config.limits.clone(),capacity:RuntimeCapacity{
                             available_slots:available,remaining_daily_traffic_bytes:remaining,
                             pause_reason:pause_reason.map(str::to_owned),queue_depth:stats.queue_depth,spool_bytes:stats.spool_bytes,
@@ -668,7 +671,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                                     let result=tokio::time::timeout(ttl,execute_lease(&engine,&ledger,&lease)).await
                                         .unwrap_or_else(|_|Err(bad_input("lease expired locally").into()));
                                     (lease.lease_id,lease.expires_at,result)
-                                }.boxed_local());
+                                });
                             }
                             failures=0;
                         }
@@ -685,7 +688,9 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         Ok(())
     };
     // Cancellation cannot cause an unstarted check to be reported as a target failure.
-    tokio::select! { result=processing=>result, _=stop_signal()=>Ok(()) }
+    tokio::task::LocalSet::new().run_until(async {
+        tokio::select! { result=processing=>result, _=stop_signal()=>Ok(()) }
+    }).await
 }
 
 fn configured_base() -> Result<Url> {
@@ -915,13 +920,29 @@ async fn retry_delay(failures: &mut u32) {
     let jitter = Utc::now().timestamp_subsec_millis() as u64 % (base + 1);
     sleep(Duration::from_secs(base + jitter)).await;
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ResourceUsage {
     cpu_percent: Option<u8>,
     working_memory_percent: Option<u8>,
     memory_stall_avg10: Option<f64>,
     paused: bool,
+}
+#[derive(Default)]
+struct ResourceSampler {
+    last: Option<(tokio::time::Instant, ResourceUsage)>,
+}
+impl ResourceSampler {
+    fn sample(&mut self, read: impl FnOnce() -> ResourceUsage) -> ResourceUsage {
+        if let Some((at, usage)) = self.last {
+            if at.elapsed() < Duration::from_secs(15) {
+                return usage;
+            }
+        }
+        let usage = read();
+        self.last = Some((tokio::time::Instant::now(), usage));
+        usage
+    }
 }
 fn resource_pressure(
     config: &LocalConfig,
@@ -1135,14 +1156,48 @@ mod tests {
         assert!(!membership_active(&path, &old));
     }
     #[test]
-    fn default_limits_are_small_and_config_rejects_invalid_values() {
+    fn default_limits_match_legacy_and_config_rejects_invalid_values() {
         let config = LocalConfig::default();
-        assert_eq!(config.limits.max_concurrency, 1);
-        assert_eq!(config.limits.daily_traffic_bytes, 100 * 1024 * 1024);
+        let legacy = Limits::default();
+        assert_eq!(usize::from(config.limits.max_concurrency), legacy.concurrency);
+        assert_eq!(config.limits.requests_per_second, legacy.global_requests_per_second);
+        assert_eq!(f64::from(config.limits.burst), legacy.burst);
+        assert_eq!(config.limits.daily_traffic_bytes, 5 * 1024 * 1024 * 1024);
+        assert_eq!(config.cpu_cores, 0.2);
+        assert_eq!(config.max_memory_bytes, 448 * 1024 * 1024);
+        let example: LocalConfig = serde_json::from_str(include_str!("../../../community-limits.example.json")).unwrap();
+        assert_eq!(serde_json::to_value(&example).unwrap(), serde_json::to_value(&config).unwrap());
         assert!(config.validate().is_ok());
         let mut invalid = config.clone();
         invalid.max_cpu_percent = 0;
         assert!(invalid.validate().is_err());
+    }
+    #[test]
+    fn explicit_participant_limits_are_preserved_including_old_small_profile() {
+        let config: LocalConfig = serde_json::from_value(serde_json::json!({
+            "cpuCores": 0.1, "maxMemoryBytes": 268435456,
+            "limits": {"maxConcurrency":1,"requestsPerSecond":0.2,"burst":1,
+                "dailyTrafficBytes":104857600,"spoolBytes":104857600}
+        })).unwrap();
+        assert!(config.validate().is_ok());
+        assert_eq!(config.cpu_cores, 0.1);
+        assert_eq!(config.limits.max_concurrency, 1);
+        assert_eq!(config.limits.daily_traffic_bytes, 104857600);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn fast_completions_do_not_accelerate_resource_recovery_samples() {
+        let mut sample = ResourceSampler::default();
+        let usage = |paused| ResourceUsage {
+            cpu_percent: Some(1), working_memory_percent: Some(10),
+            memory_stall_avg10: Some(0.0), paused,
+        };
+        assert!(sample.sample(|| usage(true)).paused);
+        for _ in 0..100 {
+            assert!(sample.sample(|| usage(false)).paused,
+                "completion or diagnostic activity must not drive resource recovery");
+        }
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        assert!(!sample.sample(|| usage(false)).paused);
     }
     #[tokio::test]
     async fn traffic_reservations_survive_restart_and_enforce_daily_limit() {

@@ -2,6 +2,7 @@
 !Cargo.toml
 !Cargo.lock
 !LICENSE
+!community-limits.example.json
 !crates
 !crates/monitor-core
 !crates/monitor-core/Cargo.toml

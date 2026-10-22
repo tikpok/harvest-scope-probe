@@ -3,6 +3,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock LICENSE ./
 COPY crates/monitor-core crates/monitor-core
 COPY crates/monitor-probe crates/monitor-probe
+COPY community-limits.example.json ./
 RUN cargo test --locked --release --workspace \
     && cargo build --locked --release -p monitor-probe --bin monitor-probe
 

@@ -65,10 +65,10 @@ pub struct CapacityLimits {
 impl Default for CapacityLimits {
     fn default() -> Self {
         Self {
-            max_concurrency: 1,
-            requests_per_second: 0.2,
-            burst: 1,
-            daily_traffic_bytes: 100 * 1024 * 1024,
+            max_concurrency: 4,
+            requests_per_second: 3.0,
+            burst: 4,
+            daily_traffic_bytes: 5 * 1024 * 1024 * 1024,
             spool_bytes: 100 * 1024 * 1024,
         }
     }
@@ -392,12 +392,12 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_modest_but_can_be_raised() {
+    fn defaults_match_legacy_capacity_and_can_be_adjusted_in_both_directions() {
         let defaults = CapacityLimits::default();
-        assert_eq!(defaults.max_concurrency, 1);
-        assert_eq!(defaults.requests_per_second, 0.2);
-        assert_eq!(defaults.burst, 1);
-        assert_eq!(defaults.daily_traffic_bytes, 100 * 1024 * 1024);
+        assert_eq!(defaults.max_concurrency, 4);
+        assert_eq!(defaults.requests_per_second, 3.0);
+        assert_eq!(defaults.burst, 4);
+        assert_eq!(defaults.daily_traffic_bytes, 5 * 1024 * 1024 * 1024);
         assert_eq!(defaults.spool_bytes, 100 * 1024 * 1024);
         assert!(defaults.validate().is_ok());
         let larger = CapacityLimits {
@@ -406,6 +406,13 @@ mod tests {
             ..defaults
         };
         assert!(larger.validate().is_ok());
+        assert!(CapacityLimits {
+            max_concurrency: 1,
+            requests_per_second: 0.2,
+            burst: 1,
+            daily_traffic_bytes: 100 * 1024 * 1024,
+            spool_bytes: 1024 * 1024,
+        }.validate().is_ok());
         assert!(CapacityLimits {
             requests_per_second: f64::NAN,
             ..larger
@@ -436,7 +443,7 @@ mod tests {
         }
         .can_accept(&limits, 100));
         assert!(!RuntimeCapacity {
-            available_slots: 2,
+            available_slots: limits.max_concurrency + 1,
             remaining_daily_traffic_bytes: 100,
             ..RuntimeCapacity::default()
         }

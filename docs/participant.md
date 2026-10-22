@@ -60,19 +60,23 @@ probe_compose logs --since 15m --tail 100 probe
 
 ## 資源を変更する
 
-資源設定は `community-limits.json` にまとめます。
+資源設定は `community-limits.json` にまとめます。2026年10月22日の変更で、既定の処理能力を旧A/Bと同じ同時4件・毎秒3件・burst 4へ引き上げました。採用済みの異なる観測元2台で従来の監視を維持することが目標です。単独のProbeや試験状態だけでは、複数地点の裏付けになりません。
 
 | 設定 | 既定値 |
 |---|---:|
-| `cpuCores` | 0.1 |
-| `maxMemoryBytes` | 268435456 |
-| `limits.maxConcurrency` | 1 |
-| `limits.requestsPerSecond` | 0.2 |
-| `limits.burst` | 1 |
-| `limits.dailyTrafficBytes` | 104857600 |
+| `cpuCores` | 0.2（0.2コア） |
+| `maxMemoryBytes` | 469762048（448MiB） |
+| `limits.maxConcurrency` | 4 |
+| `limits.requestsPerSecond` | 3.0 |
+| `limits.burst` | 4 |
+| `limits.dailyTrafficBytes` | 5368709120（5GiB/日） |
 | `limits.spoolBytes` | 104857600 |
 
-必要な項目だけ変更し、Composeの値を再生成して手動で再作成します。
+各項目は参加者が個別に増減できます。例えばCPU 0.1、メモリ256MiB、同時1件、毎秒0.2件、burst 1、100MiB/日の小さい設定も使用できます。その場合に不足する観測は「観測不足」となり、Centralが設定を増量することはありません。
+
+5GiB/日は旧Aの約3.4GB/日という短期間の概算から設けた試験値です。常に5GiBを使う指定ではありません。実際の検査数・応答サイズで消費量が変わるため、2台の実機試験では通信残量・完了数・検査別の鮮度を確認します。
+
+既存の `community-limits.json` は更新しても自動で書き換えません。以前の100MiB/日などが明記されている場合は、その制限が継続します。新しい既定値を使う際は手元の設定を保存してから必要な項目を変更し、Composeの値を再生成して手動で再作成します。既存コンテナは新しいイメージへ手動更新するまで動作が変わりません。
 
 ```sh
 python3 scripts/community-config.py community-limits.json > .env.community.resources
