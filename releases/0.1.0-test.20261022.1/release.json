@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.0-test.20261022.1",
+  "probeVersion": "0.1.0",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:7a36dce48ef02bd72c5a9799e5e0748f1cc074d5e5ee277ddb8c138168282447",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-10-22T05:18:57Z",
+  "expiresAt": "2026-10-29T05:18:57Z",
+  "sourceRevision": "7431ba5e53f3f19ce32bd0b8459c584255d25cbe",
+  "changes": [
+    "eMudhra不信任対応: rustls-webpki 0.103.16、webpki-roots 1.0.10へ更新。",
+    "コンテナのOS証明書をca-certificates 20250419~deb12u2へ更新。",
+    "問題の12チェーン拒否と正常チェーン受理のオフライン回帰テストを追加し、既存Rustテスト・配布ツールテスト・制限付き起動確認に成功。",
+    "プロトコルv2・実行時版0.1.0・状態形式を維持。既存のCommunity Probeは手動更新する。",
+    "amd64向け試験配布版。arm64および一般配布の実機受入試験は未完了。旧方式A/BのComposeへそのまま適用しない。",
+    "旧試験版0.1.0-test.20261021は今回の不信任対策前のため、新規導入・通常更新には使用しない。"
+  ]
+}

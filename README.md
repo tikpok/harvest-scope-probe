@@ -24,15 +24,15 @@ docker build -t harvest-scope-community-probe:local .
 b0792a1a7712145c21ece1756131993a4b2a690df381b06c81d02956891cf12b
 ```
 
-**証明書更新の注意:** `0.1.0-test.20261021` はeMudhraの不信任対応前です。新規導入・通常更新には使用せず、修正版の署名付き配布情報を使用してください。
-
-参考として、旧A/B実機試験用の候補版は `0.1.0-test.20261021` です。[署名済み配布情報](releases/0.1.0-test.20261021/release.json) と [署名](releases/0.1.0-test.20261021/release.sig) を使用し、次のコマンドで検証します。実行ファイルが通知する版は `0.1.0`、対応プロトコルは v2 です。
+修正版の試験配布版は **`0.1.0-test.20261022.1`** です。[配布情報](releases/0.1.0-test.20261022.1/release.json)、[署名](releases/0.1.0-test.20261022.1/release.sig)、[更新手順と検証結果](releases/0.1.0-test.20261022.1/README.md) を公開しています。実行ファイルが通知する版は既存Centralとの互換性のため `0.1.0`、対応プロトコルは v2 のままです。更新済みかどうかはイメージdigestで確認してください。
 
 ```sh
-python3 scripts/community-release.py releases/0.1.0-test.20261021/release.json releases/0.1.0-test.20261021/release.sig release-public.pem --platform linux/amd64
+python3 scripts/community-release.py releases/0.1.0-test.20261022.1/release.json releases/0.1.0-test.20261022.1/release.sig release-public.pem --platform linux/amd64
 ```
 
-一般配布の受入試験は未完了です。旧A/Bのイメージ・設定・データを保持し、別の専用Composeで試験してください。更新・復旧は[参加者向け手順](docs/participant.md#手動更新手動復旧)のとおり、検証したdigestを指定して手動で行います。
+**旧試験版 `0.1.0-test.20261021` はeMudhraの不信任対策前です。新規導入・通常更新には修正版を使用してください。** 旧配布情報と署名は履歴として保持しています。
+
+一般配布の実機受入試験は未完了です。旧方式A/Bのイメージ・設定・データを保持し、別の専用Composeで試験してください。既存のCommunity Probeの更新・復旧は[参加者向け手順](docs/participant.md#手動更新手動復旧)のとおり、検証したdigestを指定して手動で行います。
 
 ## 証明書対策と配布ビルド
 
