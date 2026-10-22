@@ -68,7 +68,7 @@ impl Default for CapacityLimits {
             max_concurrency: 4,
             requests_per_second: 3.0,
             burst: 4,
-            daily_traffic_bytes: 5 * 1024 * 1024 * 1024,
+            daily_traffic_bytes: 20 * 1024 * 1024 * 1024,
             spool_bytes: 100 * 1024 * 1024,
         }
     }
@@ -397,7 +397,7 @@ mod tests {
         assert_eq!(defaults.max_concurrency, 4);
         assert_eq!(defaults.requests_per_second, 3.0);
         assert_eq!(defaults.burst, 4);
-        assert_eq!(defaults.daily_traffic_bytes, 5 * 1024 * 1024 * 1024);
+        assert_eq!(defaults.daily_traffic_bytes, 20 * 1024 * 1024 * 1024);
         assert_eq!(defaults.spool_bytes, 100 * 1024 * 1024);
         assert!(defaults.validate().is_ok());
         let larger = CapacityLimits {

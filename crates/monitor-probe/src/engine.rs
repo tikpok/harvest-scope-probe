@@ -44,7 +44,7 @@ use crate::protocol::{
     parse_voting_remaining, request_path, ChainSnapshot,
 };
 
-const SUPER_NODE_API_BASE: &str = "https://nem.io/supernode/api/";
+pub(crate) const SUPER_NODE_API_BASE: &str = "https://nem.io/supernode/api/";
 const LOCAL_CHAIN_TTL: Duration = Duration::from_secs(60);
 const REFERENCE_CHAIN_TTL: Duration = Duration::from_secs(60);
 const REFERENCE_HASH_TTL: Duration = Duration::from_secs(10 * 60);

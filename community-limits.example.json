@@ -4,7 +4,7 @@
     "maxConcurrency": 4,
     "requestsPerSecond": 3.0,
     "burst": 4,
-    "dailyTrafficBytes": 5368709120,
+    "dailyTrafficBytes": 21474836480,
     "spoolBytes": 104857600
   },
   "maxMemoryBytes": 469762048

@@ -15,7 +15,7 @@ class ConfigTests(unittest.TestCase):
         example = json.loads((pathlib.Path(__file__).parents[2] / 'community-limits.example.json').read_text(encoding='utf-8'))
         self.assertEqual(module.render(example), module.render({}))
         self.assertEqual(example['limits'], {'maxConcurrency': 4, 'requestsPerSecond': 3.0,
-                         'burst': 4, 'dailyTrafficBytes': 5368709120, 'spoolBytes': 104857600})
+                         'burst': 4, 'dailyTrafficBytes': 21474836480, 'spoolBytes': 104857600})
 
     def test_participant_can_lower_every_limit(self):
         self.assertEqual(module.render({'cpuCores': 0.1, 'maxMemoryBytes': 268435456,

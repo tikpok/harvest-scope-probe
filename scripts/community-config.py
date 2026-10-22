@@ -14,7 +14,7 @@ def render(config):
     if isinstance(memory, bool) or not isinstance(memory, int) or memory < 33554432:
         raise ValueError('maxMemoryBytes は32MiB以上の整数で指定してください')
     limits = config.get('limits', {})
-    for key, default in [('maxConcurrency', 4), ('burst', 4), ('dailyTrafficBytes', 5368709120), ('spoolBytes', 104857600)]:
+    for key, default in [('maxConcurrency', 4), ('burst', 4), ('dailyTrafficBytes', 21474836480), ('spoolBytes', 104857600)]:
         value = limits.get(key, default)
         ceiling = 65535 if key in ('maxConcurrency', 'burst') else 9223372036854775807
         if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= ceiling:

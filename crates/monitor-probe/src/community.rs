@@ -233,9 +233,28 @@ fn budget_host_key(host: &str) -> String {
 #[derive(Debug)]
 struct LeaseBudget {
     ledger: Ledger,
+    units_per_target: u16,
     remaining: std::sync::Mutex<std::collections::BTreeMap<String, u16>>,
 }
 impl LeaseBudget {
+    fn allow_fixed_providers(&mut self, node: &monitor_core::model::Node, checks: &[monitor_core::model::CheckKind]) {
+        use monitor_core::model::{CheckKind, Network};
+        if node.network != Network::Nis1Mainnet || checks != [CheckKind::Supernode] {
+            return;
+        }
+        // Only the engine's fixed, same-origin provider is added. Lease contents
+        // cannot introduce arbitrary extra hosts or increase the local quota.
+        if let (Ok(provider), Ok(remaining)) = (
+            Url::parse(crate::engine::SUPER_NODE_API_BASE),
+            self.remaining.get_mut(),
+        ) {
+            if let Some(host) = provider.host_str() {
+                let units = self.units_per_target.min(4);
+                remaining.entry(budget_host_key(host))
+                    .and_modify(|old| *old = (*old).min(units)).or_insert(units);
+            }
+        }
+    }
     fn new(ledger: Ledger, nodes: &[monitor_core::model::Node], units: u16) -> Self {
         let mut remaining = std::collections::BTreeMap::new();
         for node in nodes {
@@ -243,6 +262,7 @@ impl LeaseBudget {
         }
         Self {
             ledger,
+            units_per_target: units,
             remaining: std::sync::Mutex::new(remaining),
         }
     }
@@ -664,7 +684,9 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                             for lease in response.leases.into_iter().take(usize::from(available)) {
                                 if !lease_is_valid(&lease) {continue;}
                                 let nodes=std::iter::once(lease.node.clone()).chain(lease.reference_nodes.iter().cloned()).collect::<Vec<_>>();
-                                let quota=Arc::new(LeaseBudget::new(ledger.clone(),&nodes,lease.request_units_per_target));
+                                let mut quota=LeaseBudget::new(ledger.clone(),&nodes,lease.request_units_per_target);
+                                quota.allow_fixed_providers(&lease.node,&lease.checks);
+                                let quota=Arc::new(quota);
                                 let engine=engine.clone().with_measurement_budget(&contact,quota);let ledger=ledger.clone();
                                 jobs.push(async move {
                                     let ttl=(lease.expires_at-Utc::now()).to_std().unwrap_or_default();
@@ -1162,7 +1184,7 @@ mod tests {
         assert_eq!(usize::from(config.limits.max_concurrency), legacy.concurrency);
         assert_eq!(config.limits.requests_per_second, legacy.global_requests_per_second);
         assert_eq!(f64::from(config.limits.burst), legacy.burst);
-        assert_eq!(config.limits.daily_traffic_bytes, 5 * 1024 * 1024 * 1024);
+        assert_eq!(config.limits.daily_traffic_bytes, 20 * 1024 * 1024 * 1024);
         assert_eq!(config.cpu_cores, 0.2);
         assert_eq!(config.max_memory_bytes, 448 * 1024 * 1024);
         let example: LocalConfig = serde_json::from_str(include_str!("../../../community-limits.example.json")).unwrap();
@@ -1255,6 +1277,34 @@ mod tests {
             budget.reserve_request("unassigned.example").await,
             Err(ProbeError::BudgetExhausted)
         ));
+    }
+    #[tokio::test]
+    async fn supernode_provider_is_allowed_only_for_its_bounded_nis1_lease() {
+        use monitor_core::model::{CheckKind, Network, Node, NodeKind};
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&dir.path().join("provider.db"), 100 * 1024 * 1024).await.unwrap();
+        let node = Node::new("nis", Network::Nis1Mainnet, NodeKind::Api, "nis.example");
+        let mut budget = LeaseBudget::new(ledger.clone(), std::slice::from_ref(&node), 4);
+        budget.allow_fixed_providers(&node, &[CheckKind::Supernode]);
+        for _ in 0..4 { assert!(budget.reserve_request("nem.io").await.is_ok()); }
+        assert!(budget.reserve_request("nem.io").await.is_err());
+        assert!(budget.reserve_request("unassigned.example").await.is_err());
+        let mut ordinary = LeaseBudget::new(ledger.clone(), std::slice::from_ref(&node), 4);
+        ordinary.allow_fixed_providers(&node, &[CheckKind::Availability]);
+        assert!(ordinary.reserve_request("nem.io").await.is_err());
+        let symbol = Node::new("symbol", Network::SymbolMainnet, NodeKind::Api, "symbol.example");
+        let mut wrong_network = LeaseBudget::new(ledger.clone(), std::slice::from_ref(&symbol), 4);
+        wrong_network.allow_fixed_providers(&symbol, &[CheckKind::Supernode]);
+        assert!(wrong_network.reserve_request("nem.io").await.is_err());
+        let mut mixed = LeaseBudget::new(ledger.clone(), std::slice::from_ref(&node), 4);
+        mixed.allow_fixed_providers(&node, &[CheckKind::Supernode, CheckKind::Availability]);
+        assert!(mixed.reserve_request("nem.io").await.is_err());
+        for (allocated, allowed) in [(2,2), (16,4)] {
+            let mut bounded = LeaseBudget::new(ledger.clone(), std::slice::from_ref(&node), allocated);
+            bounded.allow_fixed_providers(&node, &[CheckKind::Supernode]);
+            for _ in 0..allowed { assert!(bounded.reserve_request("nem.io").await.is_ok()); }
+            assert!(bounded.reserve_request("nem.io").await.is_err());
+        }
     }
     #[tokio::test]
     async fn rejected_private_target_does_not_spend_the_whole_response_reservation() {
