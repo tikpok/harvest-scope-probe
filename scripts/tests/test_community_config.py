@@ -27,6 +27,25 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(module.render({'cpuCores': 0.5, 'maxMemoryBytes': 536870912}),
                          'COMMUNITY_CPUS=0.500000\nCOMMUNITY_MEMORY=536870912\n')
 
+    def test_exact_resource_ceiling_is_accepted(self):
+        self.assertEqual(module.render({'cpuCores': 1.0, 'maxMemoryBytes': 1073741824,
+                                        'maxCpuPercent': 100}),
+                         'COMMUNITY_CPUS=1.000000\nCOMMUNITY_MEMORY=1073741824\n')
+
+    def test_excessive_settings_are_rejected(self):
+        for config in [
+            {'cpuCores': 1.000001},
+            {'maxMemoryBytes': 1073741825},
+            {'maxCpuPercent': 101},
+            {'limits': {'maxConcurrency': 5}},
+            {'limits': {'requestsPerSecond': 3.000001}},
+            {'limits': {'burst': 5}},
+            {'limits': {'dailyTrafficBytes': 21474836481}},
+            {'limits': {'spoolBytes': 104857601}},
+        ]:
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                module.render(config)
+
     def test_invalid_or_injected_values(self):
         for value in [True, 0, -1, float('nan'), '0.1\nOTHER=value']:
             with self.subTest(value=value), self.assertRaises(ValueError):

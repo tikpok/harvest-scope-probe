@@ -15,6 +15,7 @@ use monitor_core::{
     community::{
         CapacityLimits, CommunityObservation, EnrollChallenge, EnrollRequest, HeartbeatRequest,
         Lease, LeaseResponse, ResultBatch, RuntimeCapacity, TokenRequest, TokenResponse,
+        MAX_CPU_MILLICORES, MAX_MEMORY_BYTES, MIN_MEMORY_BYTES,
     },
     model::Site,
     scheduler::ScheduledJob,
@@ -79,14 +80,15 @@ impl LocalConfig {
     fn validate(&self) -> Result<()> {
         self.limits
             .validate()
-            .map_err(|e| bad_input(format!("{e:?}")))?;
+            .map_err(|e| bad_input(e.to_string()))?;
         if !self.cpu_cores.is_finite()
             || self.cpu_cores <= 0.0
+            || self.cpu_cores > f64::from(MAX_CPU_MILLICORES) / 1000.0
             || self.max_cpu_percent == 0
             || self.max_cpu_percent > 100
-            || self.max_memory_bytes < 32 * 1024 * 1024
+            || !(MIN_MEMORY_BYTES..=MAX_MEMORY_BYTES).contains(&self.max_memory_bytes)
         {
-            return Err(bad_input("invalid CPU or memory limit").into());
+            return Err(bad_input("cpuCores must be >0 and <=1; maxCpuPercent must be 1..=100; maxMemoryBytes must be 32MiB..=1GiB").into());
         }
         Ok(())
     }
@@ -133,6 +135,11 @@ impl Identity {
             public_key: URL_SAFE_NO_PAD.encode(key.public_key().as_ref()),
             key,
         })
+    }
+    fn result_signature(&self, body: &[u8]) -> String {
+        let mut message = b"harvest-scope/community-result/v1\0".to_vec();
+        message.extend_from_slice(ring::digest::digest(&ring::digest::SHA256, body).as_ref());
+        URL_SAFE_NO_PAD.encode(self.key.sign(&message).as_ref())
     }
     fn token_request(&self, challenge: &EnrollChallenge) -> TokenRequest {
         let message = format!(
@@ -322,6 +329,12 @@ impl Api {
         auth: Option<&str>,
         body: Option<&B>,
     ) -> Result<T> {
+        self.request_signed(method, endpoint, auth, body, None).await
+    }
+    async fn request_signed<T: DeserializeOwned, B: Serialize>(
+        &self, method: Method, endpoint: &str, auth: Option<&str>, body: Option<&B>,
+        signature: Option<&str>,
+    ) -> Result<T> {
         let payload = body.map(serde_json::to_vec).transpose()?;
         let sent_bytes = payload.as_ref().map_or(0, Vec::len);
         if sent_bytes > 512 * 1024 {
@@ -335,6 +348,9 @@ impl Api {
         let mut request = self.client.request(method, url);
         if let Some(token) = auth {
             request = request.bearer_auth(token);
+        }
+        if let Some(signature) = signature {
+            request = request.header("x-community-result-signature", signature);
         }
         if let Some(payload) = payload {
             request = request
@@ -673,7 +689,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                         }
                         heartbeat_due=std::time::Instant::now()+Duration::from_secs(60);
                     }
-                    if let Err(error)=flush_spool(&api,access,&spool,&state_path,&state).await {
+                    if let Err(error)=flush_spool(&api,access,&spool,&state_path,&state,&identity).await {
                         if is_auth_error(&error) {token=None;continue;}
                         tracing::warn!(%error,"community result delivery paused");
                     }
@@ -798,6 +814,7 @@ async fn flush_spool(
     spool: &Spool,
     state_path: &Path,
     state: &LocalState,
+    identity: &Identity,
 ) -> Result<()> {
     for item in spool.pending(8).await? {
         if !membership_active(state_path, state) {
@@ -814,8 +831,9 @@ async fn flush_spool(
             spool.ack(&[&item.job_id]).await?;
             continue;
         }
+        let signature = identity.result_signature(&serde_json::to_vec(&queued.batch)?);
         let sent: Result<serde_json::Value> = api
-            .request(Method::POST, "results", Some(access), Some(&queued.batch))
+            .request_signed(Method::POST, "results", Some(access), Some(&queued.batch), Some(&signature))
             .await;
         match sent {
             Ok(ack) if ack_covers_batch(&ack, queued.batch.observations.len()) => {
@@ -1195,6 +1213,19 @@ mod tests {
         assert!(invalid.validate().is_err());
     }
     #[test]
+    fn participant_config_rejects_resource_values_above_the_ceiling() {
+        let maximum = LocalConfig { cpu_cores: 1.0, max_memory_bytes: 1024 * 1024 * 1024,
+            max_cpu_percent: 100, ..LocalConfig::default() };
+        assert!(maximum.validate().is_ok());
+        for invalid in [
+            LocalConfig { cpu_cores: 1.000001, ..maximum.clone() },
+            LocalConfig { max_memory_bytes: 1024 * 1024 * 1024 + 1, ..maximum.clone() },
+            LocalConfig { limits: CapacityLimits { max_concurrency: 5, ..CapacityLimits::default() }, ..maximum.clone() },
+        ] {
+            assert!(invalid.validate().is_err(), "excessive settings must be rejected: {invalid:?}");
+        }
+    }
+    #[test]
     fn explicit_participant_limits_are_preserved_including_old_small_profile() {
         let config: LocalConfig = serde_json::from_value(serde_json::json!({
             "cpuCores": 0.1, "maxMemoryBytes": 268435456,
@@ -1233,6 +1264,23 @@ mod tests {
         assert!(second.reserve(40).await.unwrap());
         assert_eq!(second.used().await.unwrap(), 100);
     }
+    #[test]
+    fn result_signature_binds_exact_batch_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity = Identity::load_or_create(&dir.path().join("identity.key")).unwrap();
+        let body = br#"{"leaseId":"one","observations":[]}"#;
+        let signature = URL_SAFE_NO_PAD.decode(identity.result_signature(body)).unwrap();
+        
+        let message = |bytes: &[u8]| {
+            let mut value = b"harvest-scope/community-result/v1\0".to_vec();
+            value.extend_from_slice(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref());
+            value
+        };
+        let verifier = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, identity.key.public_key().as_ref());
+        assert!(verifier.verify(&message(body), &signature).is_ok());
+        assert!(verifier.verify(&message(br#"{"leaseId":"two","observations":[]}"#), &signature).is_err());
+    }
+
     #[test]
     fn identity_is_stable_and_challenge_signature_verifies() {
         let dir = tempfile::tempdir().unwrap();

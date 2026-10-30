@@ -9,7 +9,7 @@ RUN cargo test --locked --release --workspace \
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u2 \
+    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u2 perl-base libpcre2-8-0 tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 monitor \
     && mkdir -p /var/lib/monitor-probe /usr/share/licenses/monitor-probe \

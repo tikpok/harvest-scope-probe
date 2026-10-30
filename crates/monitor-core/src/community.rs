@@ -62,15 +62,13 @@ pub struct CapacityLimits {
     pub spool_bytes: u64,
 }
 
+pub const MAX_CPU_MILLICORES: u32 = 1000;
+pub const MIN_MEMORY_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
+
 impl Default for CapacityLimits {
     fn default() -> Self {
-        Self {
-            max_concurrency: 4,
-            requests_per_second: 3.0,
-            burst: 4,
-            daily_traffic_bytes: 20 * 1024 * 1024 * 1024,
-            spool_bytes: 100 * 1024 * 1024,
-        }
+        Self::MAX
     }
 }
 
@@ -80,10 +78,24 @@ pub enum CapacityError {
     ZeroLimit,
     #[error("requests per second must be finite and positive")]
     InvalidRate,
+    #[error("{0} exceeds the community probe maximum")]
+    ExceedsMaximum(&'static str),
+    #[error("available slots or remaining traffic exceed the configured limits")]
+    InvalidCapacity,
+    #[error("CPU quota must be 1..=1000 millicores and memory must be 32MiB..=1GiB")]
+    InvalidResources,
 }
 
 impl CapacityLimits {
-    /// Larger local limits are accepted; each probe operator controls their own budget.
+    /// Per-probe ceilings; these do not guarantee aggregate Central capacity.
+    pub const MAX: Self = Self {
+        max_concurrency: 4,
+        requests_per_second: 3.0,
+        burst: 4,
+        daily_traffic_bytes: 20 * 1024 * 1024 * 1024,
+        spool_bytes: 100 * 1024 * 1024,
+    };
+
     pub fn validate(&self) -> Result<(), CapacityError> {
         if self.max_concurrency == 0
             || self.burst == 0
@@ -94,6 +106,17 @@ impl CapacityLimits {
         }
         if !self.requests_per_second.is_finite() || self.requests_per_second <= 0.0 {
             return Err(CapacityError::InvalidRate);
+        }
+        for (exceeded, field) in [
+            (self.max_concurrency > Self::MAX.max_concurrency, "maxConcurrency"),
+            (self.requests_per_second > Self::MAX.requests_per_second, "requestsPerSecond"),
+            (self.burst > Self::MAX.burst, "burst"),
+            (self.daily_traffic_bytes > Self::MAX.daily_traffic_bytes, "dailyTrafficBytes"),
+            (self.spool_bytes > Self::MAX.spool_bytes, "spoolBytes"),
+        ] {
+            if exceeded {
+                return Err(CapacityError::ExceedsMaximum(field));
+            }
         }
         Ok(())
     }
@@ -121,13 +144,28 @@ pub struct RuntimeCapacity {
 }
 
 impl RuntimeCapacity {
+    pub fn validate(&self, limits: &CapacityLimits) -> Result<(), CapacityError> {
+        limits.validate()?;
+        if self.available_slots > limits.max_concurrency
+            || self.remaining_daily_traffic_bytes > limits.daily_traffic_bytes
+        {
+            return Err(CapacityError::InvalidCapacity);
+        }
+        // Older probes may omit host-resource telemetry. It never grants
+        // additional measurement capacity, even when present.
+        if self.cpu_limit_millicores.is_some_and(|cpu| cpu == 0 || cpu > MAX_CPU_MILLICORES)
+            || self.memory_limit_bytes.is_some_and(|memory| !(MIN_MEMORY_BYTES..=MAX_MEMORY_BYTES).contains(&memory))
+        {
+            return Err(CapacityError::InvalidResources);
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn can_accept(&self, limits: &CapacityLimits, estimated_bytes: u64) -> bool {
-        limits.validate().is_ok()
+        self.validate(limits).is_ok()
             && self.pause_reason.is_none()
             && self.available_slots > 0
-            && self.available_slots <= limits.max_concurrency
-            && self.remaining_daily_traffic_bytes <= limits.daily_traffic_bytes
             && estimated_bytes > 0
             && estimated_bytes <= self.remaining_daily_traffic_bytes
     }
@@ -392,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_legacy_capacity_and_can_be_adjusted_in_both_directions() {
+    fn defaults_match_legacy_capacity_and_allow_lower_limits() {
         let defaults = CapacityLimits::default();
         assert_eq!(defaults.max_concurrency, 4);
         assert_eq!(defaults.requests_per_second, 3.0);
@@ -419,6 +457,48 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn participant_limits_reject_each_value_above_the_ceiling() {
+        let maximum = serde_json::to_value(CapacityLimits::default()).unwrap();
+        for (field, excessive) in [
+            ("maxConcurrency", serde_json::json!(5)),
+            ("requestsPerSecond", serde_json::json!(3.000001)),
+            ("burst", serde_json::json!(5)),
+            ("dailyTrafficBytes", serde_json::json!(20_u64 * 1024 * 1024 * 1024 + 1)),
+            ("spoolBytes", serde_json::json!(100_u64 * 1024 * 1024 + 1)),
+        ] {
+            let mut value = maximum.clone();
+            value[field] = excessive;
+            let limits: CapacityLimits = serde_json::from_value(value).unwrap();
+            assert!(limits.validate().is_err(), "{field} must have a hard ceiling");
+        }
+    }
+
+    #[test]
+    fn reported_resources_accept_boundaries_and_legacy_omission() {
+        let limits = CapacityLimits::default();
+        for (cpu, memory) in [
+            (None, None),
+            (Some(1), Some(32 * 1024 * 1024)),
+            (Some(1000), Some(1024 * 1024 * 1024)),
+        ] {
+            let capacity = RuntimeCapacity { cpu_limit_millicores: cpu, memory_limit_bytes: memory,
+                ..RuntimeCapacity::default() };
+            assert!(capacity.validate(&limits).is_ok());
+        }
+        for (cpu, memory) in [
+            (Some(0), None),
+            (Some(1001), None),
+            (None, Some(32 * 1024 * 1024 - 1)),
+            (None, Some(1024 * 1024 * 1024 + 1)),
+        ] {
+            let capacity = RuntimeCapacity { available_slots: 1, remaining_daily_traffic_bytes: 1,
+                cpu_limit_millicores: cpu, memory_limit_bytes: memory, ..RuntimeCapacity::default() };
+            assert!(capacity.validate(&limits).is_err());
+            assert!(!capacity.can_accept(&limits, 1));
+        }
     }
 
     #[test]
