@@ -26,10 +26,10 @@ docker build -t harvest-scope-community-probe:local .
 b0792a1a7712145c21ece1756131993a4b2a690df381b06c81d02956891cf12b
 ```
 
-現在の試験配布版は **`0.1.0-test.20261022.3`** です。eMudhra対策と処理能力の見直しに、実機で判明したSupernodeの許可不足と通信予算の修正を重ねています。[配布情報](releases/0.1.0-test.20261022.3/release.json)、[署名](releases/0.1.0-test.20261022.3/release.sig)、[更新手順と検証結果](releases/0.1.0-test.20261022.3/README.md) を公開しています。実行ファイルが通知する版は既存Centralとの互換性のため `0.1.0`、対応プロトコルは v2 のままです。更新済みかどうかはイメージdigestで確認してください。
+現在の試験配布版は **`0.1.0-test.20261030.1`** です。既存の登録鍵による結果署名、設定上限、依存関係とOSパッケージの更新を含みます。[配布情報](releases/0.1.0-test.20261030.1/release.json)、[署名](releases/0.1.0-test.20261030.1/release.sig)、[更新手順と検証結果](releases/0.1.0-test.20261030.1/README.md) を公開しています。実行時版は互換性のため `0.1.0`、対応プロトコルはv2のままです。更新はimage digestで確認してください。署名だけで参加資格や観測内容の正しさを証明するものではありません。
 
 ```sh
-python3 scripts/community-release.py releases/0.1.0-test.20261022.3/release.json releases/0.1.0-test.20261022.3/release.sig release-public.pem --platform linux/amd64
+python3 scripts/community-release.py releases/0.1.0-test.20261030.1/release.json releases/0.1.0-test.20261030.1/release.sig release-public.pem --platform linux/amd64
 ```
 
 **旧試験版 `0.1.0-test.20261021` はeMudhraの不信任対策前です。新規導入・通常更新には修正版を使用してください。** 旧配布情報と署名は履歴として保持しています。

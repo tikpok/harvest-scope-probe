@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.0-test.20261030.1",
+  "probeVersion": "0.1.0",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:70c340e6a37ed069b631d5f1c272ececadc0352ab3d44ec438f1aca16e68da4f",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-10-30T04:39:31Z",
+  "expiresAt": "2026-11-06T04:39:31Z",
+  "sourceRevision": "0230769d7ed29e39d56aec0ac7faaaab32f11c05",
+  "changes": [
+    "既存の登録鍵で結果本文にEd25519署名を付与。Probe ID・鍵・状態・未送信結果の形式とプロトコルv2を維持。署名だけでは観測内容の正しさや参加資格を証明しません。",
+    "設定上限を同時4件・毎秒3要求・burst4・20GiB/日・未送信100MiB・CPU1コア・メモリ1GiBに制限。既定CPU0.2・448MiBを維持し、既存設定を自動変更しません。",
+    "rustls0.23.46、Tokio1.54.1、quinn-proto0.11.18、chacha200.10.2へ更新。eMudhraの12証明書チェーン拒否と正常チェーン受理を維持。OS証明書と必要パッケージも更新。",
+    "単独ProbeのRust252件・Python13件成功。amd64コンテナを通信なし・非root・読取専用・CPU0.2・448MiBで起動確認。従来のignored3件とarm64実機受入は未完了。",
+    "手動更新用の試験配布です。実行時版は互換性のため0.1.0のまま、更新確認はimage digestで行います。信頼の付与とCentral検証ワーカーの稼働確認は別段階です。"
+  ]
+}
