@@ -819,17 +819,26 @@ impl ProbeEngine {
                     .get_node_json(node, "/chain/score", Duration::from_secs(5))
                     .await
                     .ok();
-                let snapshot = parse_nis1_chain(&height, network_height.as_ref(), score.as_ref())
-                    .map_err(|error| ProbeError::Payload(error.to_string()))?;
-                let lag = snapshot
-                    .network_height
-                    .expect("validated NIS1 snapshot contains network height")
-                    .saturating_sub(snapshot.height);
-                Ok((
-                    dimension,
-                    Outcome::LagBlocks(lag),
-                    serde_json::to_value(snapshot).unwrap_or(Value::Null),
-                ))
+                let observed_height = height.get("height").and_then(|value| value.as_u64()
+                    .or_else(|| value.as_str().and_then(|text| text.parse().ok())))
+                    .ok_or_else(|| ProbeError::Payload("missing or invalid field: height".into()))?;
+                let observed_network_height = network_height.as_ref().and_then(|value|
+                    value.get("height")).and_then(|value| value.as_u64()
+                    .or_else(|| value.as_str().and_then(|text| text.parse().ok())));
+                let observed_score = score.as_ref().and_then(|value| value.get("score"))
+                    .and_then(|value| value.as_str().map(ToOwned::to_owned)
+                        .or_else(|| value.as_u64().map(|number| number.to_string())));
+                let (outcome, snapshot) = match parse_nis1_chain(&height, network_height.as_ref(), score.as_ref()) {
+                    Ok(snapshot) => (Outcome::LagBlocks(snapshot.network_height.unwrap().saturating_sub(snapshot.height)), snapshot),
+                    Err(error) => (Outcome::Unknown(error.to_string()), ChainSnapshot {
+                        height: observed_height,
+                        finalized_height: None,
+                        finalization_epoch: None,
+                        network_height: observed_network_height,
+                        chain_score: observed_score,
+                    }),
+                };
+                Ok((dimension, outcome, serde_json::to_value(snapshot).unwrap_or(Value::Null)))
             }
         }
     }

@@ -801,6 +801,38 @@ async fn reports_nis1_lag_against_the_observed_network_height() {
 }
 
 #[tokio::test]
+async fn nis1_secondary_failure_keeps_independently_observed_height() {
+    let engine = ProbeEngine::new("ops@example.com").with_http_transport(FakeHttp {
+        responses: HashMap::from([
+            ("/chain/height".into(), serde_json::json!({"height": 1_692_339})),
+            ("/chain/score".into(), serde_json::json!({"score": "9000"})),
+        ]),
+        error: None,
+    });
+    let observation = engine.check(&nis1_node(), &job(CheckKind::Chain), Site::A).await;
+    assert!(matches!(observation.outcome, Outcome::Unknown(_)));
+    assert_eq!(observation.evidence["height"], 1_692_339);
+    assert_eq!(observation.evidence["chainScore"], "9000");
+    assert!(observation.evidence["networkHeight"].is_null());
+}
+
+#[tokio::test]
+async fn nis1_bad_score_keeps_height_and_peer_max_without_a_sync_verdict() {
+    let engine = ProbeEngine::new("ops@example.com").with_http_transport(FakeHttp {
+        responses: HashMap::from([
+            ("/chain/height".into(), serde_json::json!({"height": "420"})),
+            ("/node/active-peers/max-chain-height".into(), serde_json::json!({"height": 425})),
+            ("/chain/score".into(), serde_json::json!({"score": null})),
+        ]),
+        error: None,
+    });
+    let observation = engine.check(&nis1_node(), &job(CheckKind::Chain), Site::A).await;
+    assert!(matches!(observation.outcome, Outcome::Unknown(_)));
+    assert_eq!(observation.evidence["height"], 420);
+    assert_eq!(observation.evidence["networkHeight"], 425);
+}
+
+#[tokio::test]
 async fn keeps_symbol_chain_unknown_without_a_reference_sample() {
     let engine = ProbeEngine::new("ops@example.com").with_http_transport(FakeHttp {
         responses: HashMap::from([(
