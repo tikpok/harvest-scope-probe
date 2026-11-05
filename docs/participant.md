@@ -1,131 +1,197 @@
-# 任意参加Probeの使い方
+# 参加者向け手順
 
-Centralを運営する人と、観測を手伝う人を分けた方式です。参加者はいつでも停止・撤退できます。稼働保証、障害対応、ログ提出、撤退の事前連絡は不要です。監視先からの問い合わせは配布情報に記載された運営窓口が担当します。
+ProbeはNEM・Symbolの公開ノードを検査し、結果をHarvest Scope Network Monitorへ送ります。いつでも停止・撤退できます。稼働保証、障害対応、ログ提出、撤退の事前連絡は不要です。
 
-対象はLinuxのDocker Compose、amd64／arm64です。配布者がその版・アーキテクチャを検証し、署名付きの配布情報を公開してから導入してください。リポジトリのコードがあるだけでは、一般配布の受入試験が済んだことにはなりません。
+## 1. 導入に必要なもの
 
-## 導入
+Linux・amd64（x86_64）の端末、Docker Compose、Python 3、OpenSSLを用意してください。以下ではGitを使ってファイルを取得します。arm64の実機受け入れ確認は済んでいません。
 
-専用の作業ディレクトリに、次を用意します。
+受信用ポートの開放、ウォレット、秘密鍵、既存ノードのデータは不要です。Probeは参加用の鍵を自分で作ります。他のコンテナを操作するためのDockerソケットも渡しません。VPS代や通信料は参加者の負担です。
 
-- `compose.community-probe.yaml`
-- `.env.community.example` と `community-limits.example.json`
-- `scripts/community-config.py` と `scripts/community-release.py`
-- 選んだ版の `release.json`、`release.sig`
-- 別経路で確認した運営の署名公開鍵 `release-public.pem`
+## 2. ファイルと配布情報を確認する
 
-Python 3とOpenSSLは管理端末で使用します。Probe自体に管理端末の権限を渡す必要はありません。公開鍵を更新ファイルと一緒に無条件で差し替えないでください。
+[公式リポジトリ](https://github.com/tikpok/harvest-scope-probe)を取得し、そのフォルダーへ移動します。
 
-署名と対象アーキテクチャを検証します。arm64では最後の値を `linux/arm64` に変えます。
+```bash
+git clone --depth 1 https://github.com/tikpok/harvest-scope-probe.git
+cd harvest-scope-probe
+```
 
-```sh
-python3 scripts/community-release.py release.json release.sig release-public.pem --platform linux/amd64
+2026年11月5日時点の試験配布版は`0.1.1-test.20261105.1`、Probeの実行時版は`0.1.1`です。通信プロトコルはv2のままです。NIS1の補助APIが失敗しても、取得済みの対象ノードの高さを保持する修正を含みます。
+
+署名・有効期限・対応CPUを確認します。
+
+```bash
+python3 scripts/community-release.py \
+  releases/0.1.1-test.20261105.1/release.json \
+  releases/0.1.1-test.20261105.1/release.sig \
+  release-public.pem --platform linux/amd64
+```
+
+成功すると、版番号、対応CPU、`image`などが表示されます。`image`は後で使うため控えてください。`@sha256:...`は、使用するイメージの内容を固定する識別値です。
+
+この版の配布情報は **2026年11月12日12:09:41 JST** まで有効です。期限切れや署名エラーが出た場合は、端末の時計とGitHub上の新しい配布情報を確認し、検証に成功するまで導入・更新へ進まないでください。検証を省略したり、期限を書き換えたりはしません。
+
+公開鍵と検証スクリプトは、公式リポジトリから取得したものを確認して使います。この確認は公式GitHubを信頼することが前提です。署名は配布情報の改変を検出しますが、取得元・公開鍵・検証ツールが一緒に差し替えられた場合まで検出するものではありません。公開鍵を更新するときは、運営の変更案内を確認してください。
+
+署名とイメージの識別値だけでは、以前の正規な配布情報が提示されたことまでは見分けられません。有効期限を設けることで、古い署名済みの案内が長期間使われることを防ぎます。
+
+配布情報の有効期限は、導入・更新に使える案内の期限です。期限を過ぎただけで、すでに動いているProbeが停止したり、自動更新されたりすることはありません。
+
+## 3. 初回の設定を作って起動する
+
+次のコピー操作は初回だけ行います。更新時は、手元の設定を上書きしないでください。
+
+```bash
 cp .env.community.example .env.community
 cp community-limits.example.json community-limits.json
 python3 scripts/community-config.py community-limits.json > .env.community.resources
 ```
 
-検証結果の `image` を `.env.community` の `PROBE_IMAGE` に記入します。値は `registry/path@sha256:...` です。`latest`などの移動するタグは使いません。CentralのURLも同じファイルで確認します。
+`.env.community`を開き、`PROBE_IMAGE`へ検証結果の`image`をそのまま記入します。送信先の`CENTRAL_API_URL`は `https://monitor-api.7338.work` です。移動するタグの`latest`などは使いません。
 
-以下の関数は、この専用Composeだけを操作するための省略記法です。
+以後のコマンドを短くするため、次をコピーして実行してください。このProbe専用のCompose設定で操作します。別のシェルを開いた場合は、もう一度実行します。
 
-```sh
+```bash
 probe_compose() {
-  docker compose --env-file .env.community --env-file .env.community.resources -f compose.community-probe.yaml "$@"
+  sudo docker compose --env-file .env.community --env-file .env.community.resources -f compose.community-probe.yaml "$@"
 }
 probe_compose config
 ```
 
-検証したダイジェストを明示してイメージを手動取得し、起動します。次の例のプレースホルダーは配布情報の値へ置き換えます。
+設定内容を確認し、検証したイメージを手動で取得して起動します。下の値は、検証結果の`image`へ置き換えてください。0.1.1版の検証結果は次の固定値です。
 
-```sh
-docker pull 'REGISTRY/PATH@sha256:VERIFIED_DIGEST'
+```bash
+sudo docker pull 'ghcr.io/tikpok/harvest-scope-probe@sha256:a4e2b6f30d9343c603f36d18cfff7fc783c20e777773eed5c64e56a8a1ef30d2'
 probe_compose up -d --no-deps --pull never probe
 ```
 
-初回起動時に端末鍵とProbe IDが登録されます。試験状態で始まり、運営が整合性と観測元を確認して採用するまでは公開判定の裏付けには使われません。受信用ポート、ウォレット、ノードのデータ、Dockerソケットは不要です。
+公開GHCRイメージの取得に、GitHubアカウントや`docker login`は不要です。起動時に勝手に別のイメージを取得することはありません。
 
-## 状態確認
+## 4. 参加状態と役割を確認する
 
-```sh
+```bash
 probe_compose exec -T probe /usr/local/bin/monitor-probe --status
 probe_compose logs --since 15m --tail 100 probe
 ```
 
-設定上限、通信使用量、残り予算、未送信件数、稼働中の仕事、休止理由、採用状態、版の互換性、配布情報のURLを表示します。Centralが一時停止している間も、ローカルの状態を確認できます。
+初回起動時に参加用の鍵とProbe IDが作られ、`trial`で登録されます。参加状態は次のように分かれます。
 
-`resource_pressure` は資源不足、`traffic_budget` は当日の通信予算到達、`spool_full` は保存枠不足を示します。自動的に仕事の取得を抑える状態です。増設をお願いする通知ではありません。資源と通信予算が戻れば、設定の範囲内で再開します。通信予算の日付はUTCで区切ります。
+| 表示 | 意味 |
+| --- | --- |
+| `trial` | 試験参加。通常の仕事を受け取り、検査結果を送る段階 |
+| `active` | 通常参加。自動承認の条件を満たすか、運営の採用操作で移行した状態 |
+| `contributor` | 通常参加とは別に、希望者が運営の確認を受けて付く役割 |
 
-`server.assignmentHealth` はCentral側の仕事の配分状態です。`normal` は通常配分、`waiting_for_results` は最近渡した仕事の結果が届かず通常配分を休止中、`recovery_check` は軽い疎通検査を1件だけ渡して復帰を確認する状態です。`retryAt` は次に確認用の仕事を渡せる時刻です。資源不足・予算不足や対象ノードの異常を理由に、Probe資格を失効させる仕組みではありません。回復確認の有効な結果が届けば通常配分へ戻り、参加者の追加操作やイメージ更新は不要です。
+運営側で自動承認を有効にすると、登録後10分以上、3対象以上・6件以上の有効な仕事、最近の稼働通知と観測結果などを確認して、`trial`から`active`へ移行します。**現在の試験運用では自動承認を保留しています。** `trial`のままでも異常ではなく、再登録は不要です。`active`になるためのProbe ID提出も不要です。
 
-通信量は、測定先・Centralへの要求前に予約し、応答の大きさと保守的な通信オーバーヘッドで精算します。OSのインターフェースで測った厳密な総転送量とは区別してください。イメージ取得は管理端末の手動操作であり、この予算に含みません。
+`active`になった後、`contributor`を希望する場合だけProbe IDを運営へお知らせください。運営者と端末・接続元の対応を確認します。通常時の補助集計や、運営の観測点が一時停止したときにCentralと組み合わせる判定を補う役割です。複数の独立した運営者の観測とCentralの確認など、運営側の条件がそろった場合に使います。役割は自動では付きません。
 
-## 資源を変更する
+状態表示には、資源上限、通信使用量、残り予算、未送信件数、稼働中の仕事、休止理由、参加状態が含まれます。表示できる項目は配布版によって異なります。
 
-資源設定は `community-limits.json` にまとめます。2026年10月22日の変更で、既定の処理能力を旧A/Bと同じ同時4件・毎秒3件・burst 4へ引き上げました。採用済みの異なる観測元2台で従来の監視を維持することが目標です。単独のProbeや試験状態だけでは、複数地点の裏付けになりません。
+| 休止理由 | 意味と対応 |
+| --- | --- |
+| `resource_pressure` | CPU・メモリなどの負荷が高いため待機。資源が戻れば設定の範囲で再開 |
+| `traffic_budget` | 通信予算に到達。翌UTC日まで新しい検査を待機 |
+| `spool_full` | 未送信結果の保存枠に到達。送信が進むまで待機 |
+| `central_unavailable` | 送信先と通信できない状態。送信先の公開情報とログを確認 |
 
-| 設定 | 既定値 | 最大値 |
-|---|---:|---:|
-| `cpuCores` | 0.2（0.2コア） | 1.0（1コア） |
+新しい版で `server.autoAdmissionReason` が表示される場合、`policy_not_enforced` は運営側の切替待ち、`warming_up` は登録後の待機、`waiting_for_results` は検査実績の待機を意味します。`server.admission`は参加状態、`server.trustRole`は任意の役割です。
+
+コンテナの`healthy`は、全対象・全検査の完了を意味しません。休止や未送信が続く場合は、`--status`とログを確認してください。問い合わせ時に鍵・認証情報を公開する必要はありません。
+
+## 5. 資源や通信の上限を変更する
+
+`community-limits.json`を編集します。初期設定と設定できる最大値は次のとおりです。
+
+| 項目 | 初期設定 | 最大値 |
+| --- | ---: | ---: |
+| `cpuCores` | 0.2 | 1.0 |
 | `maxMemoryBytes` | 469762048（448MiB） | 1073741824（1GiB） |
 | `maxCpuPercent` | 70 | 100 |
 | `limits.maxConcurrency` | 4 | 4 |
 | `limits.requestsPerSecond` | 3.0 | 3.0 |
 | `limits.burst` | 4 | 4 |
-| `limits.dailyTrafficBytes` | 21474836480（20GiB/日） | 21474836480（20GiB/日） |
-| `limits.spoolBytes` | 104857600（100MiB） | 104857600（100MiB） |
+| `limits.dailyTrafficBytes` | 21474836480（20GiB/日） | 同左 |
+| `limits.spoolBytes` | 104857600（100MiB） | 同左 |
 
-各項目は最大値までの範囲で参加者が個別に調整できます。メモリは32MiB以上、CPU・要求速度は0より大きい有限数、その他は正の整数とし、`maxCpuPercent` は1〜100です。例えばCPU 0.1、メモリ256MiB、同時1件、毎秒0.2件、burst 1、100MiB/日の小さい設定も使用できます。その場合に不足する観測は「観測不足」となり、Centralが設定を増量することはありません。
+各項目は個別に下げられます。メモリは32MiB以上、CPU・要求速度は0より大きい数、`maxCpuPercent`は1〜100、それ以外は正の整数で指定します。上限を超える設定はエラーになります。
 
-上限超過は自動で丸めません。設定生成とProbe起動時にエラーとし、Centralも上限を越えた稼働通知をHTTP 400で拒否します。古い上限超過設定がCentralのDBに残っていても、新しい仕事は貸し出しません。CPU・メモリの申告を省略する旧形式には互換性を維持しますが、申告の有無で処理能力の上限は変わりません。
+20GiB/日は通信予算の上限であり、毎日その量を使う指定ではありません。小さい予算も選べますが、到達すると翌UTC日まで新しい検査を止めます。UTCの日付は日本時間の午前9時に変わります。使用量は保守的な見積りを含み、OSで測る総転送量とは一致しません。イメージのダウンロードはこの予算に含まれません。
 
-これらは1台あたりの上限です。参加台数が増えた場合のCentral全体の負荷や、本番での処理能力を保証する値ではありません。改変されたProbeの実際のCPU・メモリ使用量をCentralから強制する仕組みでもありません。
+設定を変えたら、Compose用の値を作り直して再作成します。
 
-20GiB/日は、旧A/B相当の処理を保つための試験値です。2026年10月22日の実機Aでは、約1時間の予算消費を一日に換算すると約14GiBとなり、従来の5GiBでは不足すると分かりました。この値は一時予約と保守的なオーバーヘッドを含み、OSの実転送量とは一致しません。常に20GiBを使う指定ではなく、要求速度は毎秒3件のままです。長時間運転の合格は未確認で、通信残量・完了数・検査別の鮮度を継続して確認します。既存のローカル設定は自動変更されません。5GiBなどの小さい上限も選べますが、予算到達後は翌UTC日まで新しい検査が止まります。
-
-既存の `community-limits.json` は更新しても自動で書き換えません。以前の100MiB/日などが明記されている場合は、その制限が継続します。上限を増量済みの場合は、新版への更新前に手元の設定を保存し、表の最大値以下へ戻してください。Centralを先に更新した場合も、超過設定の稼働通知と割当ては拒否されます。設定変更後はComposeの値を再生成して手動で再作成します。Probe起動時の検証は新しいイメージへの更新後に適用されます。
-
-```sh
+```bash
 python3 scripts/community-config.py community-limits.json > .env.community.resources
 probe_compose up -d --no-deps --pull never --force-recreate probe
 ```
 
-CPU・メモリの制限はコンテナに適用されます。メモリとswapの合計上限を同じ値にするため、Probeの追加swap使用は許可しません。ホストのswap設定は変えません。設定を下げて実行できなくなった仕事は期限切れで解放され、対象ノードの障害には数えません。ログは10MiBを3本まで保持します。
+既存の設定は、配布版を更新しても自動では増量しません。少ない資源では実行できる検査が減り、観測不足になる場合がありますが、増設の義務はありません。メモリ上限はコンテナに適用し、Probeの追加swap使用は許可しません。ホストのswap設定は変更しません。
 
-メモリ判定では回収可能なキャッシュと作業用メモリを分け、メモリ待ち時間も確認します。休止後は安定したサンプルが続いてから再開します。資源ファイルを読む操作を、再開のために繰り返す必要はありません。
+## 6. 一時停止・再開する
 
-## 一時停止・再開・撤退
+一時停止します。送信先に接続できないときも実行できます。
 
-停止はCentralが不通でも完了します。明示的に停止したコンテナは自動再開しません。
-
-```sh
+```bash
 probe_compose stop probe
 ```
 
-再開するときは手動で実行します。
+同じ鍵・Probe IDで再開します。
 
-```sh
+```bash
 probe_compose start probe
 ```
 
-撤退は先に停止し、必要なら接続可能な範囲で資格の失効を通知します。`--leave` はローカルに撤退状態を保存し、鍵を削除した後で、最大3秒の通知を試みます。
+一時停止だけなら、撤退や再参加の操作は不要です。
 
-```sh
+## 7. 撤退・再参加する
+
+撤退するときは、先に停止してから次を実行します。
+
+```bash
 probe_compose stop probe
 probe_compose run --rm --no-deps --pull never probe --leave
+```
+
+`--leave`は専用データに撤退状態を記録し、参加用の鍵を削除します。その後、最大3秒の範囲で送信先へ撤退を通知します。通知に失敗してもローカルの撤退処理は完了します。
+
+専用データも削除する場合だけ、次を実行します。鍵、参加状態、未送信結果、通信予算の記録などが対象です。他のノードやコンテナのデータは削除しません。
+
+```bash
 probe_compose down --volumes
 ```
 
-削除するのはこの専用Composeのコンテナと専用データだけです。他のノードやコンテナは操作しません。再参加では新しい端末鍵が作られ、再び試験状態から始まります。削除せず撤退したデータを使う場合は、停止後に `--rejoin` を明示してください。以前の端末鍵に属する未送信結果は引き継ぎません。
+専用データを削除していない場合は、起動し直しても撤退状態が続きます。再参加するには、停止した状態で次を実行します。
 
-## 手動更新・手動復旧
+```bash
+probe_compose run --rm --no-deps --pull never probe --rejoin
+```
 
-1. 新しい版の変更内容・互換性・署名・ダイジェストを確認します。
-2. 上記の検証コマンドで署名を検証します。
-3. 現在の `.env.community` を前版用に控えます。前版イメージも保持します。
-4. 新しいダイジェストを指定して `docker pull` を手動実行します。
-5. `.env.community` の `PROBE_IMAGE` を検証した値へ変更します。
-6. `probe_compose up -d --no-deps --pull never --force-recreate probe` を実行します。
-7. `--status` とログで状態を確認します。
+新しい鍵とProbe IDが自動で作られ、`trial`から始まります。以前の参加中に取得した未送信の検査結果は削除されます。資源設定と、残っている当日の通信予算の記録はそのまま使います。以前の`contributor`の役割は引き継がず、希望する場合は新しいProbe IDで運営の確認を受け直します。
 
-失敗した場合は `PROBE_IMAGE` を保持した前版のダイジェストへ戻し、同じ再作成コマンドを手動で実行します。復旧可能な版とローカルデータの互換性は配布情報で確認してください。自動更新、起動時のイメージ取得、Docker全体の設定変更は行いません。Centralが互換性のない版への仕事を停止しても、イメージを強制更新することはありません。
+このコマンドは再参加後も端末上でProbeを動かし続けます。通常のバックグラウンド運転に戻す場合は、`Ctrl+C`で終了してから起動します。
+
+```bash
+probe_compose up -d --no-deps --pull never probe
+```
+
+専用データをすべて削除した場合は、この再参加コマンドは不要です。設定を確認して起動すると、新しい鍵・Probe IDで`trial`から始まります。
+
+## 8. 手動で更新・復旧する
+
+1. GitHubの新しい配布案内で、変更内容とローカルデータの互換性を確認します。
+2. 新しい版の署名・有効期限・対応CPUを検証します。初回設定のコピーは繰り返しません。
+3. 現在の設定と旧版のイメージを保持します。公開鍵や検証スクリプトを変更する場合は、変更内容も確認します。
+4. 検証結果の`image`を指定して、`sudo docker pull`で手動取得します。
+5. `.env.community`の`PROBE_IMAGE`を、その`image`へ変更します。
+6. 次を実行して再作成し、`--status`とログを確認します。
+
+```bash
+probe_compose up -d --no-deps --pull never --force-recreate probe
+probe_compose exec -T probe /usr/local/bin/monitor-probe --status
+probe_compose logs --since 15m --tail 100 probe
+```
+
+失敗した場合は、配布案内でデータ互換性が確認できる旧版の`PROBE_IMAGE`へ戻し、同じ再作成コマンドを実行します。更新や復旧のために`down --volumes`を実行する必要はありません。
+
+0.1.1版へ更新したら、`--status`の`version`が`0.1.1`であることを確認してください。配布版の`0.1.1-test.20261105.1`とは表記が異なります。古い版が表示される場合は、`PROBE_IMAGE`の指定とコンテナの再作成を確認してください。自動更新や、送信先からの強制的なイメージ更新は行いません。
