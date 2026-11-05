@@ -26,10 +26,10 @@ docker build -t harvest-scope-community-probe:local .
 b0792a1a7712145c21ece1756131993a4b2a690df381b06c81d02956891cf12b
 ```
 
-現在の試験配布版は **`0.1.0-test.20261030.1`** です。既存の登録鍵による結果署名、設定上限、依存関係とOSパッケージの更新を含みます。[配布情報](releases/0.1.0-test.20261030.1/release.json)、[署名](releases/0.1.0-test.20261030.1/release.sig)、[更新手順と検証結果](releases/0.1.0-test.20261030.1/README.md) を公開しています。実行時版は互換性のため `0.1.0`、対応プロトコルはv2のままです。更新はimage digestで確認してください。署名だけで参加資格や観測内容の正しさを証明するものではありません。
+現在の試験配布版は **`0.1.0-test.20261105.1`** です。NIS1で補助APIが失敗しても取得済みの高さを保持する修正を含みます。[配布情報](releases/0.1.0-test.20261105.1/release.json)、[署名](releases/0.1.0-test.20261105.1/release.sig)、[更新・切戻し手順](releases/0.1.0-test.20261105.1/README.md) を確認してください。実行時版は `0.1.0`、プロトコルはv2のままです。
 
 ```sh
-python3 scripts/community-release.py releases/0.1.0-test.20261030.1/release.json releases/0.1.0-test.20261030.1/release.sig release-public.pem --platform linux/amd64
+python3 scripts/community-release.py releases/0.1.0-test.20261105.1/release.json releases/0.1.0-test.20261105.1/release.sig release-public.pem --platform linux/amd64
 ```
 
 **旧試験版 `0.1.0-test.20261021` はeMudhraの不信任対策前です。新規導入・通常更新には修正版を使用してください。** 旧配布情報と署名は履歴として保持しています。
