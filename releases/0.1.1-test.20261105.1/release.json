@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.1-test.20261105.1",
+  "probeVersion": "0.1.1",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:a4e2b6f30d9343c603f36d18cfff7fc783c20e777773eed5c64e56a8a1ef30d2",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-11-05T03:09:41Z",
+  "expiresAt": "2026-11-12T03:09:41Z",
+  "sourceRevision": "da65f3c34252e0ed8c87b52333beb7b79876b602",
+  "changes": [
+    "実行時版を0.1.1へ更新し、登録・稼働通知・状態表示へ反映します。通信プロトコルはv2のままです。",
+    "NIS1でpeer側最大高やスコアの取得に失敗しても、取得できた対象自身の高さを証拠に残します。判定不能を示すUnknownは維持し、Centralが独立した観測から同期遅れを補完します。",
+    "正常に取得できた同期遅延の値、3要求の通信枠、署名、プロトコルv2、Probe ID・登録鍵・保存データの形式を維持します。",
+    "ProbeのRustテスト153件（既存のignored3件を除く）成功。amd64の非root・読取専用・通信なし・CPU0.2・448MiBで状態表示を確認しました。A/B端末での反映と継続観測は別途確認します。"
+  ]
+}
