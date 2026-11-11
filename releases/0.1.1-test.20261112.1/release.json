@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.1-test.20261112.1",
+  "probeVersion": "0.1.1",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:a4e2b6f30d9343c603f36d18cfff7fc783c20e777773eed5c64e56a8a1ef30d2",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-11-11T23:11:31Z",
+  "expiresAt": "2026-11-18T23:11:31Z",
+  "sourceRevision": "da65f3c34252e0ed8c87b52333beb7b79876b602",
+  "changes": [
+    "検証済みの0.1.1イメージを継続して配布します。イメージのダイジェストとProbeの動作は前回と同じです。",
+    "導入・更新用の配布情報を再発行し、有効期限を発行時刻から7日後に設定しました。",
+    "参加者向け手順を、申請不要の通常参加とcontributorの自動付与に合わせて更新しました。"
+  ]
+}

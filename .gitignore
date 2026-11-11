@@ -43,3 +43,6 @@ __pycache__/
 
 !/releases/0.1.1-test.20261105.1/release.json
 !/releases/0.1.1-test.20261105.1/release.sig
+
+!/releases/0.1.1-test.20261112.1/release.json
+!/releases/0.1.1-test.20261112.1/release.sig
