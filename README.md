@@ -4,7 +4,7 @@ NEM・Symbolの公開ノードを検査し、結果を[Harvest Scope Network Mon
 
 IDの申請は不要です。参加・停止・撤退は自由で、サーバー代や通信料は参加者の負担です。
 
-試験配布版：[`0.1.1-test.20261112.1`](releases/0.1.1-test.20261112.1/README.md)
+試験配布版：[`0.1.1-test.20261115.1`](releases/0.1.1-test.20261115.1/README.md)
 
 ## 参加するには
 

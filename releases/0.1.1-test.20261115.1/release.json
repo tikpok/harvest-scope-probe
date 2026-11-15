@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "version": "0.1.1-test.20261115.1",
+  "probeVersion": "0.1.1",
+  "image": "ghcr.io/tikpok/harvest-scope-probe@sha256:f46ba12ba3feced83a08f90d4deda8b16071cdff0ac26911b76f0b1f1ac92580",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "releasedAt": "2026-11-15T09:31:36Z",
+  "expiresAt": "2026-11-22T09:31:36Z",
+  "sourceRevision": "72029bf9e9c355cf0aa61dbbaaab677834594f2f",
+  "changes": [
+    "対象ノードの最終化高と参照ノード群の最終化高の差を測り、60ブロック以上でWarning、120ブロック以上でCriticalと判定します。",
+    "ネットワーク全体の停止は、最終化が進まない間にチェーンが進んだブロック数で判定します。最初の観測は履歴の基準となり、その後の観測で停止を確認します。",
+    "Finalizationの証拠は日次対象も30分で期限切れとなり、確認に使う観測は15分以内にそろえる必要があります。観測間隔が30分を超えた場合や接続先が変わった場合は履歴を取り直します。日次対象の実行頻度は維持します。",
+    "実行時版0.1.1、通信プロトコルv2、Probe ID・登録鍵・保存形式、通信・資源上限を維持します。旧版の分単位の結果はCentralが高さの証拠から判定し直します。",
+    "core・Probeの関連テストとlinux/amd64イメージの検証を完了しました。A/B実機の更新と継続観測は、端末ごとに確認してください。"
+  ]
+}
