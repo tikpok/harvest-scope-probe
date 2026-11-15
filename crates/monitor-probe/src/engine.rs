@@ -643,7 +643,18 @@ impl ProbeEngine {
                     ProbeError::Payload("valid Symbol chain sample unavailable".into())
                 })?;
                 let mut evidence = serde_json::to_value(&snapshot).unwrap_or(Value::Null);
-                let reference_snapshots = self.reference_chain_snapshots(reference_nodes).await;
+                let reference_snapshots = self
+                    .reference_chain_snapshots(reference_nodes)
+                    .await
+                    .into_iter()
+                    .filter(|(_, reference)| {
+                        dimension != Dimension::Finalization
+                            || (reference.height > 0
+                                && reference.finalized_height.is_some_and(|finalized| {
+                                    finalized > 0 && finalized <= reference.height
+                                }))
+                    })
+                    .collect::<Vec<_>>();
                 let expected = reference_nodes.len();
                 let responding = reference_snapshots.len();
                 if let Some(object) = evidence.as_object_mut() {
@@ -704,59 +715,57 @@ impl ProbeEngine {
                                     json!(reference_finalized_height),
                                 );
                             }
-                            let Some(history) = self.finalization_history.as_ref() else {
-                                return Ok((
-                                    dimension,
-                                    Outcome::Unknown("finalization history unavailable".into()),
-                                    evidence,
-                                ));
-                            };
-                            let observed_at = Utc::now();
-                            let mut usable_stalled_minutes = Vec::new();
-                            for (reference, reference_snapshot) in &reference_snapshots {
-                                let Some(finalized_height) = reference_snapshot.finalized_height
-                                else {
-                                    continue;
-                                };
-                                let Ok(history_key) = reference_history_key(reference) else {
-                                    continue;
-                                };
-                                let Ok(assessment) = history
-                                    .evaluate(
-                                        &history_key,
-                                        FinalizationSample {
-                                            chain_height: reference_snapshot.height,
-                                            finalized_height,
-                                            // A network-wide stall cannot use the reference
-                                            // finalized median as its own progress witness: when
-                                            // every reference stalls, that median also stops.
-                                            // Advancing chain height is the independent witness.
-                                            reference_finalized_height: reference_snapshot.height,
-                                        },
-                                        observed_at,
-                                    )
-                                    .await
-                                else {
-                                    continue;
-                                };
-                                match assessment {
-                                    FinalizationAssessment::InsufficientHistory => {}
-                                    FinalizationAssessment::Progressing => {
-                                        usable_stalled_minutes.push(0)
-                                    }
-                                    FinalizationAssessment::StalledMinutes(minutes) => {
-                                        usable_stalled_minutes.push(minutes)
+                            let outcome = monitor_core::finalization::node_outcome(
+                                &Outcome::Healthy,
+                                &evidence,
+                            );
+                            let mut usable_stalled_blocks = Vec::new();
+                            if let Some(history) = self.finalization_history.as_ref() {
+                                let history = history.for_probe_context(node, reference_nodes);
+                                let observed_at = Utc::now();
+                                for (reference, reference_snapshot) in &reference_snapshots {
+                                    let Some(finalized_height) = reference_snapshot.finalized_height
+                                    else {
+                                        continue;
+                                    };
+                                    let Ok(history_key) = reference_history_key(reference) else {
+                                        continue;
+                                    };
+                                    let Ok(assessment) = history
+                                        .evaluate(
+                                            &history_key,
+                                            FinalizationSample {
+                                                chain_height: reference_snapshot.height,
+                                                finalized_height,
+                                                // Retain the existing SQLite sample contract;
+                                                // chain progress alone witnesses a network stall.
+                                                reference_finalized_height: reference_snapshot.height,
+                                            },
+                                            observed_at,
+                                        )
+                                        .await
+                                    else {
+                                        continue;
+                                    };
+                                    match assessment {
+                                        FinalizationAssessment::InsufficientHistory => {}
+                                        FinalizationAssessment::Progressing => {
+                                            usable_stalled_blocks.push(0)
+                                        }
+                                        FinalizationAssessment::StalledBlocks(blocks) => {
+                                            usable_stalled_blocks.push(blocks)
+                                        }
                                     }
                                 }
                             }
-                            let usable = usable_stalled_minutes.len();
-                            let stalled = usable_stalled_minutes
+                            let usable = usable_stalled_blocks.len();
+                            let stalled = usable_stalled_blocks
                                 .iter()
-                                .filter(|minutes| **minutes > 0)
+                                .filter(|blocks| **blocks > 0)
                                 .count();
-                            usable_stalled_minutes.sort_unstable_by(|left, right| right.cmp(left));
-                            let stalled_minutes = if stalled > expected / 2 {
-                                usable_stalled_minutes
+                            usable_stalled_blocks.sort_unstable_by(|left, right| right.cmp(left));
+                            let stalled_blocks = if stalled > expected / 2 {
+                                usable_stalled_blocks
                                     .get(expected / 2)
                                     .copied()
                                     .unwrap_or(0)
@@ -767,36 +776,15 @@ impl ProbeEngine {
                                 object.insert(
                                     "networkFinalization".into(),
                                     json!({
+                                        "metric": "stalled_blocks",
                                         "expectedReferences": expected,
                                         "usableReferences": usable,
                                         "stalledReferences": stalled,
-                                        "stalledMinutes": stalled_minutes
+                                        "stalledBlocks": stalled_blocks
                                     }),
                                 );
                             }
-                            let assessment = history
-                                .evaluate(
-                                    &node.id,
-                                    FinalizationSample {
-                                        chain_height: snapshot.height,
-                                        finalized_height: snapshot.finalized_height.expect(
-                                            "validated Symbol snapshot has finalized height",
-                                        ),
-                                        reference_finalized_height,
-                                    },
-                                    observed_at,
-                                )
-                                .await
-                                .map_err(|error| ProbeError::Payload(error.to_string()))?;
-                            match assessment {
-                                FinalizationAssessment::InsufficientHistory => Outcome::Unknown(
-                                    "insufficient finalization progress history".into(),
-                                ),
-                                FinalizationAssessment::Progressing => Outcome::Healthy,
-                                FinalizationAssessment::StalledMinutes(minutes) => {
-                                    Outcome::FinalizationStalledMinutes(minutes)
-                                }
-                            }
+                            outcome
                         }
                     }
                     _ => Outcome::Unknown("reference sample unavailable".into()),
@@ -1616,7 +1604,7 @@ fn node_url(node: &Node, path: &str) -> Result<Url, ProbeError> {
     Ok(url)
 }
 
-fn reference_history_key(node: &Node) -> Result<String, ProbeError> {
+pub(crate) fn reference_history_key(node: &Node) -> Result<String, ProbeError> {
     Ok(node_url(node, "/")?.origin().ascii_serialization())
 }
 

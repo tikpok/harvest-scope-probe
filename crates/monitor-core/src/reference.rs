@@ -2,7 +2,11 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::model::Severity;
+use crate::{
+    community::Verdict,
+    finalization::{MAX_OBSERVATION_GAP_SECONDS, block_verdict},
+    model::Severity,
+};
 
 #[must_use]
 pub fn median(values: &[u64]) -> Option<u64> {
@@ -42,18 +46,9 @@ impl ReferenceQuorum {
     }
 }
 
-#[derive(Debug, Clone)]
-struct Baseline {
-    target_height: u64,
-    target_finalized: u64,
-    reference_height: u64,
-    reference_finalized: u64,
-    observed_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Default)]
 pub struct FinalizationTracker {
-    baselines: HashMap<String, Baseline>,
+    baselines: HashMap<String, DateTime<Utc>>,
 }
 
 impl FinalizationTracker {
@@ -67,48 +62,30 @@ impl FinalizationTracker {
         reference_finalized: u64,
         observed_at: DateTime<Utc>,
     ) -> Option<Severity> {
-        let Some(baseline) = self.baselines.get(node_id) else {
-            self.baselines.insert(
-                node_id.to_owned(),
-                Baseline {
-                    target_height,
-                    target_finalized,
-                    reference_height,
-                    reference_finalized,
-                    observed_at,
-                },
-            );
-            return None;
-        };
-
-        if target_finalized != baseline.target_finalized {
-            self.baselines.insert(
-                node_id.to_owned(),
-                Baseline {
-                    target_height,
-                    target_finalized,
-                    reference_height,
-                    reference_finalized,
-                    observed_at,
-                },
-            );
+        if target_height == 0
+            || target_finalized == 0
+            || reference_height == 0
+            || reference_finalized == 0
+            || target_finalized > target_height
+            || reference_finalized > reference_height
+        {
             return None;
         }
-
-        let elapsed = observed_at.signed_duration_since(baseline.observed_at);
-        let target_chain_advanced = target_height.saturating_sub(baseline.target_height) >= 20;
-        let reference_chain_advanced =
-            reference_height.saturating_sub(baseline.reference_height) >= 20;
-        let reference_finalization_advanced = reference_finalized > baseline.reference_finalized;
-        if !(target_chain_advanced && reference_chain_advanced && reference_finalization_advanced) {
-            return None;
+        if let Some(previous) = self.baselines.get(node_id) {
+            let elapsed = observed_at.signed_duration_since(*previous);
+            if elapsed < Duration::zero() {
+                return None;
+            }
+            if elapsed > Duration::seconds(MAX_OBSERVATION_GAP_SECONDS) {
+                self.baselines.insert(node_id.to_owned(), observed_at);
+                return None;
+            }
         }
-        if elapsed >= Duration::minutes(60) {
-            Some(Severity::Critical)
-        } else if elapsed >= Duration::minutes(30) {
-            Some(Severity::Warning)
-        } else {
-            None
+        self.baselines.insert(node_id.to_owned(), observed_at);
+        match block_verdict(reference_finalized.saturating_sub(target_finalized)) {
+            Verdict::Healthy => None,
+            Verdict::Warning => Some(Severity::Warning),
+            Verdict::Critical => Some(Severity::Critical),
         }
     }
 }

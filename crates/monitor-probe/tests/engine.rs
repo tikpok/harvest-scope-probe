@@ -1095,47 +1095,23 @@ async fn schema_v2_symbol_chain_stays_unknown_without_a_strict_reference_majorit
     assert_eq!(observations[0].evidence["referenceResponding"], 2);
 }
 
-#[tokio::test]
-async fn schema_v2_finalization_emits_stalled_minutes_from_durable_history() {
-    let history = FinalizationHistory::in_memory().await.unwrap();
-    history
-        .evaluate(
-            "symbol",
-            FinalizationSample {
-                chain_height: 1_000,
-                finalized_height: 900,
-                reference_finalized_height: 950,
-            },
-            chrono::Utc::now() - chrono::Duration::minutes(31),
-        )
-        .await
-        .unwrap();
-    let chain = |height, finalized_height| {
-        serde_json::json!({
-            "height": height,
-            "scoreHigh": 2,
-            "scoreLow": 3,
-            "latestFinalizedBlock": {"height": finalized_height, "finalizationEpoch": 77}
-        })
-    };
-    let engine = ProbeEngine::new("ops@example.com")
-        .with_http_transport(FakeHttp {
-            responses: HashMap::from([
-                ("local.example/chain/info".into(), chain(1_020, 900)),
-                ("reference-0.example/chain/info".into(), chain(1_022, 951)),
-                ("reference-1.example/chain/info".into(), chain(1_023, 952)),
-                ("reference-2.example/chain/info".into(), chain(1_024, 953)),
-            ]),
-            error: None,
-        })
-        .with_finalization_history(history);
+fn finalization_chain(height: u64, finalized_height: u64) -> Value {
+    serde_json::json!({
+        "height": height,
+        "scoreHigh": 2,
+        "scoreLow": 3,
+        "latestFinalizedBlock": {"height": finalized_height, "finalizationEpoch": 77}
+    })
+}
+
+fn finalization_nodes(count: usize) -> (Node, Vec<Node>) {
     let local = Node::new(
         "symbol",
         Network::SymbolMainnet,
         NodeKind::Api,
         "local.example",
     );
-    let references = (0..5)
+    let references = (0..count)
         .map(|index| {
             Node::new(
                 format!("reference-{index}"),
@@ -1144,8 +1120,34 @@ async fn schema_v2_finalization_emits_stalled_minutes_from_durable_history() {
                 format!("reference-{index}.example"),
             )
         })
-        .collect::<Vec<_>>();
+        .collect();
+    (local, references)
+}
 
+#[tokio::test]
+async fn schema_v2_finalization_reports_current_lag_without_target_history() {
+    let engine = ProbeEngine::new("ops@example.com").with_http_transport(FakeHttp {
+        responses: HashMap::from([
+            (
+                "local.example/chain/info".into(),
+                finalization_chain(1_020, 900),
+            ),
+            (
+                "reference-0.example/chain/info".into(),
+                finalization_chain(1_022, 951),
+            ),
+            (
+                "reference-1.example/chain/info".into(),
+                finalization_chain(1_023, 952),
+            ),
+            (
+                "reference-2.example/chain/info".into(),
+                finalization_chain(1_024, 953),
+            ),
+        ]),
+        error: None,
+    });
+    let (local, references) = finalization_nodes(5);
     let observations = engine
         .check_all_with_references(
             &local,
@@ -1155,11 +1157,7 @@ async fn schema_v2_finalization_emits_stalled_minutes_from_durable_history() {
             &references,
         )
         .await;
-
-    assert!(matches!(
-        observations[0].outcome,
-        Outcome::FinalizationStalledMinutes(minutes) if minutes >= 30
-    ));
+    assert_eq!(observations[0].outcome, Outcome::LagBlocks(52));
     assert_eq!(observations[0].evidence["referenceExpected"], 5);
     assert_eq!(observations[0].evidence["referenceResponding"], 3);
     assert_eq!(
@@ -1169,65 +1167,36 @@ async fn schema_v2_finalization_emits_stalled_minutes_from_durable_history() {
 }
 
 #[tokio::test]
-async fn schema_v2_finalization_emits_fail_closed_network_reference_evidence() {
+async fn schema_v2_finalization_uses_lag_even_when_local_finalization_advanced() {
     let history = FinalizationHistory::in_memory().await.unwrap();
-    let started = chrono::Utc::now() - chrono::Duration::minutes(61);
-    for (host, finalized_height) in [
-        ("reference-0.example", 900),
-        ("reference-1.example", 900),
-        ("reference-2.example", 900),
-    ] {
-        history
-            .evaluate(
-                &format!("https://{host}:3001"),
-                FinalizationSample {
-                    chain_height: 1_000,
-                    finalized_height,
-                    reference_finalized_height: 1_000,
-                },
-                started,
-            )
-            .await
-            .unwrap();
-    }
-    let chain = |height, finalized_height| {
-        serde_json::json!({
-            "height": height,
-            "scoreHigh": 2,
-            "scoreLow": 3,
-            "latestFinalizedBlock": {"height": finalized_height, "finalizationEpoch": 77}
-        })
-    };
+    history
+        .evaluate(
+            "symbol",
+            FinalizationSample {
+                chain_height: 1_000,
+                finalized_height: 899,
+                reference_finalized_height: 950,
+            },
+            chrono::Utc::now() - chrono::Duration::minutes(1),
+        )
+        .await
+        .unwrap();
     let engine = ProbeEngine::new("ops@example.com")
+        .with_finalization_history(history)
         .with_http_transport(FakeHttp {
             responses: HashMap::from([
-                ("local.example/chain/info".into(), chain(1_030, 901)),
-                ("reference-0.example/chain/info".into(), chain(1_030, 900)),
-                ("reference-1.example/chain/info".into(), chain(1_031, 900)),
-                ("reference-2.example/chain/info".into(), chain(1_032, 900)),
+                (
+                    "local.example/chain/info".into(),
+                    finalization_chain(1_100, 900),
+                ),
+                (
+                    "reference-0.example/chain/info".into(),
+                    finalization_chain(1_100, 1_020),
+                ),
             ]),
             error: None,
-        })
-        .with_finalization_history(history);
-    let local = Node::new(
-        "subject",
-        Network::SymbolMainnet,
-        NodeKind::Api,
-        "local.example",
-    );
-    let references = (0..3)
-        .map(|index| {
-            let mut reference = Node::new(
-                "subject",
-                Network::SymbolMainnet,
-                NodeKind::Api,
-                format!("reference-{index}.example"),
-            );
-            reference.display_name = "reference".into();
-            reference
-        })
-        .collect::<Vec<_>>();
-
+        });
+    let (local, references) = finalization_nodes(1);
     let observations = engine
         .check_all_with_references(
             &local,
@@ -1237,16 +1206,156 @@ async fn schema_v2_finalization_emits_fail_closed_network_reference_evidence() {
             &references,
         )
         .await;
+    assert_eq!(observations[0].outcome, Outcome::LagBlocks(120));
+}
 
+#[tokio::test]
+async fn schema_v2_finalization_emits_fail_closed_network_reference_evidence() {
+    for progressed in [60, 120] {
+        let history = FinalizationHistory::in_memory().await.unwrap();
+        let (local, references) = finalization_nodes(3);
+        let scoped = history.for_verifier_context("probe", &local, &references);
+        let started = chrono::Utc::now() - chrono::Duration::minutes(1);
+        for reference in &references {
+            scoped
+                .evaluate(
+                    &format!("https://{}:3001", reference.host),
+                    FinalizationSample {
+                        chain_height: 1_000,
+                        finalized_height: 900,
+                        reference_finalized_height: 1_000,
+                    },
+                    started,
+                )
+                .await
+                .unwrap();
+        }
+        let engine = ProbeEngine::new("ops@example.com")
+            .with_finalization_history(history)
+            .with_http_transport(FakeHttp {
+                responses: std::iter::once((
+                    "local.example/chain/info".into(),
+                    finalization_chain(1_000 + progressed, 900),
+                ))
+                .chain(references.iter().map(|reference| {
+                    (
+                        format!("{}/chain/info", reference.host),
+                        finalization_chain(1_000 + progressed, 900),
+                    )
+                }))
+                .collect(),
+                error: None,
+            });
+        let observations = engine
+            .check_all_with_references(
+                &local,
+                &job(CheckKind::Finalization),
+                Site::A,
+                2,
+                &references,
+            )
+            .await;
+        assert_eq!(observations[0].outcome, Outcome::LagBlocks(0));
+        assert_eq!(
+            observations[0].evidence["networkFinalization"],
+            serde_json::json!({
+                "metric": "stalled_blocks",
+                "expectedReferences": 3,
+                "usableReferences": 3,
+                "stalledReferences": 3,
+                "stalledBlocks": progressed,
+            })
+        );
+    }
+}
+
+#[tokio::test]
+async fn schema_v2_network_finalization_retains_expected_reference_quorum() {
+    let history = FinalizationHistory::in_memory().await.unwrap();
+    let (local, references) = finalization_nodes(5);
+    let scoped = history.for_verifier_context("probe", &local, &references);
+    let started = chrono::Utc::now() - chrono::Duration::minutes(1);
+    let mut responses = HashMap::from([(
+        "local.example/chain/info".into(),
+        finalization_chain(1_200, 900),
+    )]);
+    for (reference, progress) in references.iter().zip([60, 90, 120]) {
+        scoped
+            .evaluate(
+                &format!("https://{}:3001", reference.host),
+                FinalizationSample {
+                    chain_height: 1_000,
+                    finalized_height: 900,
+                    reference_finalized_height: 1_000,
+                },
+                started,
+            )
+            .await
+            .unwrap();
+        responses.insert(
+            format!("{}/chain/info", reference.host),
+            finalization_chain(1_000 + progress, 900),
+        );
+    }
+    let engine = ProbeEngine::new("ops@example.com")
+        .with_finalization_history(history)
+        .with_http_transport(FakeHttp {
+            responses,
+            error: None,
+        });
+    let observations = engine
+        .check_all_with_references(
+            &local,
+            &job(CheckKind::Finalization),
+            Site::A,
+            2,
+            &references,
+        )
+        .await;
     assert_eq!(
         observations[0].evidence["networkFinalization"],
         serde_json::json!({
-            "expectedReferences": 3,
-            "usableReferences": 3,
-            "stalledReferences": 3,
-            "stalledMinutes": 61
+            "metric": "stalled_blocks", "expectedReferences": 5,
+            "usableReferences": 3, "stalledReferences": 3, "stalledBlocks": 60,
         })
     );
+}
+
+#[tokio::test]
+async fn schema_v2_finalization_requires_reference_majority_and_valid_finalized_heights() {
+    for invalid_finalized in [false, true] {
+        let mut responses = HashMap::from([
+            (
+                "local.example/chain/info".into(),
+                finalization_chain(1_100, 900),
+            ),
+            (
+                "reference-0.example/chain/info".into(),
+                finalization_chain(1_100, 1_020),
+            ),
+        ]);
+        if invalid_finalized {
+            responses.insert(
+                "reference-1.example/chain/info".into(),
+                finalization_chain(1_100, 1_101),
+            );
+        }
+        let engine = ProbeEngine::new("ops@example.com").with_http_transport(FakeHttp {
+            responses,
+            error: None,
+        });
+        let (local, references) = finalization_nodes(3);
+        let observations = engine
+            .check_all_with_references(
+                &local,
+                &job(CheckKind::Finalization),
+                Site::A,
+                2,
+                &references,
+            )
+            .await;
+        assert!(matches!(observations[0].outcome, Outcome::Unknown(_)));
+    }
 }
 
 #[tokio::test]

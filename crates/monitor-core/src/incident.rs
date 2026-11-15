@@ -36,7 +36,7 @@ pub struct NetworkFinalizationSample {
     pub expected_references: usize,
     pub responding_references: usize,
     pub stalled_references: usize,
-    pub stalled_minutes: u64,
+    pub stalled_blocks: u64,
     pub observed_at: DateTime<Utc>,
 }
 
@@ -730,6 +730,7 @@ impl IncidentEvaluator {
                         .is_some_and(|latest_seen| latest_seen > sample.observed_at)
             });
         let invalid = sample.expected_references == 0
+            || sample.responding_references > sample.expected_references
             || sample.responding_references <= sample.expected_references / 2
             || sample.stalled_references > sample.responding_references
             || node_state_is_newer
@@ -746,21 +747,28 @@ impl IncidentEvaluator {
             return Vec::new();
         }
         let majority_stalled = sample.stalled_references > sample.expected_references / 2;
-        let class = if !majority_stalled || sample.stalled_minutes < 30 {
-            Classification::Healthy
+        let verdict = if majority_stalled {
+            crate::finalization::block_verdict(sample.stalled_blocks)
         } else {
-            let severity = if sample.stalled_minutes >= 60 {
-                Severity::Critical
-            } else {
-                Severity::Warning
-            };
-            Classification::Failed(
-                severity,
-                format!(
-                    "{}/{} reference APIs stalled for {} minutes",
-                    sample.stalled_references, sample.expected_references, sample.stalled_minutes
-                ),
-            )
+            crate::community::Verdict::Healthy
+        };
+        let class = match verdict {
+            crate::community::Verdict::Healthy => Classification::Healthy,
+            crate::community::Verdict::Warning | crate::community::Verdict::Critical => {
+                Classification::Failed(
+                    if verdict == crate::community::Verdict::Critical {
+                        Severity::Critical
+                    } else {
+                        Severity::Warning
+                    },
+                    format!(
+                        "{}/{} reference APIs stalled for {} blocks",
+                        sample.stalled_references,
+                        sample.expected_references,
+                        sample.stalled_blocks
+                    ),
+                )
+            }
         };
 
         let (events, aggregate_was_open, aggregate_is_open) = {
@@ -1464,32 +1472,14 @@ enum Classification {
 }
 
 fn classify_observation(observation: &Observation) -> Classification {
-    let class = classify(observation.dimension, &observation.outcome);
-    let Classification::Failed(severity, fallback_summary) = class else {
-        return class;
+    let normalized;
+    let outcome = if observation.dimension == Dimension::Finalization {
+        normalized = crate::finalization::node_outcome(&observation.outcome, &observation.evidence);
+        &normalized
+    } else {
+        &observation.outcome
     };
-    if observation.dimension != Dimension::Finalization {
-        return Classification::Failed(severity, fallback_summary);
-    }
-    let Some(height) = observation
-        .evidence
-        .get("height")
-        .and_then(serde_json::Value::as_u64)
-    else {
-        return Classification::Failed(severity, fallback_summary);
-    };
-    let Some(finalized_height) = observation
-        .evidence
-        .get("finalizedHeight")
-        .and_then(serde_json::Value::as_u64)
-        .filter(|finalized_height| *finalized_height <= height)
-    else {
-        return Classification::Failed(severity, fallback_summary);
-    };
-    Classification::Failed(
-        severity,
-        format!("{} blocks behind current height", height - finalized_height),
-    )
+    classify(observation.dimension, outcome)
 }
 
 /// Shared interpretation for arbitrary community observers; temporal gates remain separate.
@@ -1532,19 +1522,18 @@ fn classify(dimension: Dimension, outcome: &Outcome) -> Classification {
                 Classification::Healthy
             }
         }
-        Outcome::FinalizationStalledMinutes(minutes) if dimension == Dimension::Finalization => {
-            if *minutes >= 60 {
-                Classification::Failed(
-                    Severity::Critical,
-                    format!("finalization stalled for {minutes} minutes"),
-                )
-            } else if *minutes >= 30 {
-                Classification::Failed(
-                    Severity::Warning,
-                    format!("finalization stalled for {minutes} minutes"),
-                )
-            } else {
-                Classification::Healthy
+        Outcome::LagBlocks(blocks) if dimension == Dimension::Finalization => {
+            use crate::community::Verdict;
+            match crate::finalization::block_verdict(*blocks) {
+                Verdict::Healthy => Classification::Healthy,
+                verdict => Classification::Failed(
+                    if verdict == Verdict::Critical {
+                        Severity::Critical
+                    } else {
+                        Severity::Warning
+                    },
+                    format!("{blocks} blocks behind reference finalized height median"),
+                ),
             }
         }
         Outcome::Remaining(remaining) if dimension == Dimension::Certificate => {

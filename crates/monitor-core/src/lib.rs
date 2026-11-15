@@ -1,6 +1,7 @@
 pub mod community;
 pub mod community_temporal;
 pub mod discovery;
+pub mod finalization;
 pub mod guardian;
 pub mod incident;
 pub mod model;

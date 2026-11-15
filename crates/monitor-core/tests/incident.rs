@@ -12,6 +12,27 @@ fn instant(second: i64) -> DateTime<Utc> {
 }
 
 #[test]
+fn finalization_consensus_uses_block_gap_and_rejects_legacy_minutes() {
+    use monitor_core::{community::Verdict, incident::consensus_verdict};
+    for (blocks, expected) in [
+        (59, Verdict::Healthy),
+        (60, Verdict::Warning),
+        (119, Verdict::Warning),
+        (120, Verdict::Critical),
+    ] {
+        assert_eq!(
+            consensus_verdict(Dimension::Finalization, &Outcome::LagBlocks(blocks)),
+            Some(expected)
+        );
+    }
+    let legacy: Outcome = serde_json::from_value(serde_json::json!({
+        "kind": "finalization_stalled_minutes", "value": 60
+    }))
+    .unwrap();
+    assert_eq!(consensus_verdict(Dimension::Finalization, &legacy), None);
+}
+
+#[test]
 fn connectivity_confirmation_never_mixes_rest_availability_with_peer_tcp() {
     let mut evaluator = IncidentEvaluator::default();
     for second in [0, 30] {
@@ -64,17 +85,19 @@ fn evaluator_ignores_a_check_kind_attached_to_the_wrong_dimension() {
     let mut evaluator = IncidentEvaluator::default();
 
     for (site, second) in [(Site::A, 0), (Site::A, 30), (Site::B, 60)] {
-        assert!(evaluator
-            .ingest(
-                observation(
-                    site,
-                    second,
-                    Dimension::Sync,
-                    Outcome::Failure("not a chain result".into()),
+        assert!(
+            evaluator
+                .ingest(
+                    observation(
+                        site,
+                        second,
+                        Dimension::Sync,
+                        Outcome::Failure("not a chain result".into()),
+                    )
+                    .with_check_kind(CheckKind::PeerTcp),
                 )
-                .with_check_kind(CheckKind::PeerTcp),
-            )
-            .is_empty());
+                .is_empty()
+        );
     }
 
     assert!(evaluator.open_incidents().is_empty());
@@ -357,14 +380,23 @@ fn observation_for_node(
     dimension: Dimension,
     outcome: Outcome,
 ) -> Observation {
-    Observation::new(
+    let blocks = match &outcome {
+        Outcome::LagBlocks(blocks) => *blocks,
+        _ => 0,
+    };
+    let observation = Observation::new(
         format!("job-{second}-{site:?}"),
         node_id,
         site,
         dimension,
         outcome,
         instant(second),
-    )
+    );
+    if dimension == Dimension::Finalization {
+        observation.with_evidence(finalization_evidence(1_000, 900, 900 + blocks))
+    } else {
+        observation
+    }
 }
 
 fn normal_context() -> EvaluationContext {
@@ -465,10 +497,7 @@ fn all_dimensions_need_candidates_cross_site_confirmation_and_two_site_recovery(
         ),
         (Dimension::Latency, Outcome::LatencyMillis(2_000)),
         (Dimension::Sync, Outcome::LagBlocks(5)),
-        (
-            Dimension::Finalization,
-            Outcome::FinalizationStalledMinutes(30),
-        ),
+        (Dimension::Finalization, Outcome::LagBlocks(60)),
         (Dimension::Peers, Outcome::ZeroPeers),
         (Dimension::Certificate, Outcome::Remaining(30)),
         (Dimension::Voting, Outcome::Remaining(30)),
@@ -543,24 +572,15 @@ fn every_dimension_uses_the_frozen_threshold_and_invalid_combinations_are_unknow
         Some(Severity::Critical)
     );
     assert_eq!(
-        severity(
-            Dimension::Finalization,
-            &Outcome::FinalizationStalledMinutes(29)
-        ),
+        severity(Dimension::Finalization, &Outcome::LagBlocks(59)),
         None
     );
     assert_eq!(
-        severity(
-            Dimension::Finalization,
-            &Outcome::FinalizationStalledMinutes(30)
-        ),
+        severity(Dimension::Finalization, &Outcome::LagBlocks(60)),
         Some(Severity::Warning)
     );
     assert_eq!(
-        severity(
-            Dimension::Finalization,
-            &Outcome::FinalizationStalledMinutes(60)
-        ),
+        severity(Dimension::Finalization, &Outcome::LagBlocks(120)),
         Some(Severity::Critical)
     );
     assert_eq!(
@@ -702,75 +722,75 @@ fn open_certificate_incident_refreshes_remaining_days_and_clamps_expiry_at_zero(
     assert_eq!(clamped[0]["evidence_summary"], "0 remaining");
 }
 
+fn finalization_evidence(
+    height: u64,
+    finalized: u64,
+    reference_finalized: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "height": height,
+        "finalizedHeight": finalized,
+        "referenceMedianFinalizedHeight": reference_finalized,
+        "referenceExpected": 5,
+        "referenceResponding": 4,
+        "referenceHosts": ["ref-a", "ref-b", "ref-c", "ref-d"],
+        "referenceHeights": [2_000, 2_000, 2_000, 2_000]
+    })
+}
+
 #[test]
-fn open_finalization_incident_refreshes_the_gap_from_current_height() {
-    let finalization = |site, second, height, finalized_height| {
+fn open_finalization_incident_refreshes_the_gap_from_reference_finalized_height() {
+    let finalization = |site, second, height, reference_finalized| {
         observation(
             site,
             second,
             Dimension::Finalization,
-            Outcome::FinalizationStalledMinutes(30),
+            Outcome::LagBlocks(reference_finalized - 900),
         )
-        .with_evidence(serde_json::json!({
-            "height": height,
-            "finalizedHeight": finalized_height
-        }))
+        .with_evidence(finalization_evidence(height, 900, reference_finalized))
     };
     let mut evaluator = IncidentEvaluator::default();
-    let _ = evaluator.ingest(finalization(Site::A, 0, 1_000, 900));
-    let _ = evaluator.ingest(finalization(Site::A, 30, 1_000, 900));
-    let opened = evaluator.ingest(finalization(Site::B, 60, 1_000, 900));
+    let _ = evaluator.ingest(finalization(Site::A, 0, 1_000, 1_000));
+    let _ = evaluator.ingest(finalization(Site::A, 30, 1_000, 1_000));
+    let opened = evaluator.ingest(finalization(Site::B, 60, 1_000, 1_000));
     assert!(matches!(
         opened.as_slice(),
         [IncidentTransition::Opened {
             severity: Severity::Warning,
             evidence_summary,
             ..
-        }] if evidence_summary == "site A: 100 blocks behind current height; site B: 100 blocks behind current height"
+        }] if evidence_summary == "site A: 100 blocks behind reference finalized height median; site B: 100 blocks behind reference finalized height median"
     ));
 
-    let refreshed = evaluator.ingest(finalization(Site::A, 90, 1_100, 900));
+    assert!(matches!(
+        evaluator.ingest(finalization(Site::A, 90, 1_100, 1_000)).as_slice(),
+        [IncidentTransition::EvidenceUpdated { evidence_summary, .. }]
+            if evidence_summary == "100 blocks behind reference finalized height median"
+    ));
+    let refreshed = evaluator.ingest(finalization(Site::A, 120, 1_100, 1_010));
     assert!(matches!(
         refreshed.as_slice(),
         [IncidentTransition::EvidenceUpdated {
             evidence_summary,
             ..
-        }] if evidence_summary == "200 blocks behind current height"
+        }] if evidence_summary == "110 blocks behind reference finalized height median"
     ));
 }
 
 #[test]
-fn finalization_summary_falls_back_to_stalled_time_for_invalid_height_evidence() {
+fn invalid_finalization_height_evidence_does_not_open_an_incident() {
     let mut evaluator = IncidentEvaluator::default();
-    let invalid = observation(
-        Site::A,
-        0,
-        Dimension::Finalization,
-        Outcome::FinalizationStalledMinutes(30),
-    )
-    .with_evidence(serde_json::json!({
-        "height": 900,
-        "finalizedHeight": 1_000
-    }));
-    let _ = evaluator.ingest(invalid.clone());
-    let _ = evaluator.ingest(Observation {
-        job_id: "invalid-candidate".into(),
-        observed_at: instant(30),
-        ..invalid.clone()
-    });
-    let opened = evaluator.ingest(Observation {
-        job_id: "invalid-confirm".into(),
-        site: Site::B,
-        observed_at: instant(60),
-        ..invalid
-    });
-    assert!(matches!(
-        opened.as_slice(),
-        [IncidentTransition::Opened {
-            evidence_summary,
-            ..
-        }] if evidence_summary == "site A: finalization stalled for 30 minutes; site B: finalization stalled for 30 minutes"
-    ));
+    for (site, second) in [(Site::A, 0), (Site::A, 30), (Site::B, 60)] {
+        let invalid = observation(
+            site,
+            second,
+            Dimension::Finalization,
+            Outcome::LagBlocks(120),
+        )
+        .with_evidence(finalization_evidence(900, 1_000, 1_120));
+        assert!(evaluator.ingest(invalid).is_empty());
+    }
+    assert!(evaluator.open_incidents().is_empty());
 }
 
 #[test]
@@ -1122,12 +1142,7 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
     let mut evaluator = IncidentEvaluator::default();
 
     let _ = evaluator.ingest_with_context(
-        observation(
-            Site::A,
-            0,
-            Dimension::Finalization,
-            Outcome::FinalizationStalledMinutes(60),
-        ),
+        observation(Site::A, 0, Dimension::Finalization, Outcome::LagBlocks(120)),
         symbol_context(),
     );
     let _ = evaluator.ingest_with_context(
@@ -1135,7 +1150,7 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
             Site::A,
             30,
             Dimension::Finalization,
-            Outcome::FinalizationStalledMinutes(60),
+            Outcome::LagBlocks(120),
         ),
         symbol_context(),
     );
@@ -1146,7 +1161,7 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
                     Site::B,
                     60,
                     Dimension::Finalization,
-                    Outcome::FinalizationStalledMinutes(60),
+                    Outcome::LagBlocks(120),
                 ),
                 symbol_context(),
             )
@@ -1160,7 +1175,7 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
         expected_references: 5,
         responding_references: 4,
         stalled_references: 3,
-        stalled_minutes: 60,
+        stalled_blocks: 120,
         observed_at: instant(second),
     };
     assert!(matches!(
@@ -1190,17 +1205,19 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
         ]
     ));
 
-    assert!(evaluator
-        .ingest_with_context(
-            observation(
-                Site::A,
-                210,
-                Dimension::Finalization,
-                Outcome::FinalizationStalledMinutes(60),
-            ),
-            symbol_context(),
-        )
-        .is_empty());
+    assert!(
+        evaluator
+            .ingest_with_context(
+                observation(
+                    Site::A,
+                    210,
+                    Dimension::Finalization,
+                    Outcome::LagBlocks(120),
+                ),
+                symbol_context(),
+            )
+            .is_empty()
+    );
 
     let healthy = |site, second| NetworkFinalizationSample {
         network: Network::SymbolMainnet,
@@ -1208,7 +1225,7 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
         expected_references: 5,
         responding_references: 4,
         stalled_references: 0,
-        stalled_minutes: 0,
+        stalled_blocks: 0,
         observed_at: instant(second),
     };
     assert!(matches!(
@@ -1223,17 +1240,19 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
             .as_slice(),
         [IncidentTransition::Resolved { .. }]
     ));
-    assert!(evaluator
-        .ingest_with_context(
-            observation(
-                Site::A,
-                200,
-                Dimension::Finalization,
-                Outcome::FinalizationStalledMinutes(60),
-            ),
-            symbol_context(),
-        )
-        .is_empty());
+    assert!(
+        evaluator
+            .ingest_with_context(
+                observation(
+                    Site::A,
+                    200,
+                    Dimension::Finalization,
+                    Outcome::LagBlocks(120),
+                ),
+                symbol_context(),
+            )
+            .is_empty()
+    );
     assert!(matches!(
         evaluator
             .ingest_with_context(
@@ -1241,7 +1260,7 @@ fn network_majority_finalization_opens_one_network_incident_and_suppresses_nodes
                     Site::A,
                     300,
                     Dimension::Finalization,
-                    Outcome::FinalizationStalledMinutes(60),
+                    Outcome::LagBlocks(120),
                 ),
                 symbol_context(),
             )
@@ -1259,7 +1278,7 @@ fn older_network_aggregate_never_suppresses_a_newer_node_incident() {
                 site,
                 second,
                 Dimension::Finalization,
-                Outcome::FinalizationStalledMinutes(60),
+                Outcome::LagBlocks(120),
             ),
             symbol_context(),
         );
@@ -1271,7 +1290,7 @@ fn older_network_aggregate_never_suppresses_a_newer_node_incident() {
         expected_references: 5,
         responding_references: 4,
         stalled_references: 3,
-        stalled_minutes: 60,
+        stalled_blocks: 120,
         observed_at: instant(second),
     };
     let _ = evaluator.ingest_network_finalization(sample(Site::A, 800));
@@ -1294,56 +1313,58 @@ fn network_recovery_watermarks_every_suppressed_node_gate() {
                 site,
                 second,
                 Dimension::Finalization,
-                Outcome::FinalizationStalledMinutes(60),
+                Outcome::LagBlocks(120),
             ),
             symbol_context(),
         );
     }
-    let sample = |site, second, stalled_references, stalled_minutes| NetworkFinalizationSample {
+    let sample = |site, second, stalled_references, stalled_blocks| NetworkFinalizationSample {
         network: Network::SymbolMainnet,
         site,
         expected_references: 5,
         responding_references: 4,
         stalled_references,
-        stalled_minutes,
+        stalled_blocks,
         observed_at: instant(second),
     };
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 120, 3, 60));
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 150, 3, 60));
-    let _ = evaluator.ingest_network_finalization(sample(Site::B, 180, 3, 60));
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 120, 3, 120));
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 150, 3, 120));
+    let _ = evaluator.ingest_network_finalization(sample(Site::B, 180, 3, 120));
     let _ = evaluator.ingest_network_finalization(sample(Site::A, 240, 0, 0));
     let _ = evaluator.ingest_network_finalization(sample(Site::B, 270, 0, 0));
 
     for (site, second) in [(Site::A, 220), (Site::A, 250), (Site::B, 260)] {
-        assert!(evaluator
-            .ingest_with_context(
-                observation(
-                    site,
-                    second,
-                    Dimension::Finalization,
-                    Outcome::FinalizationStalledMinutes(60),
-                ),
-                symbol_context(),
-            )
-            .is_empty());
+        assert!(
+            evaluator
+                .ingest_with_context(
+                    observation(
+                        site,
+                        second,
+                        Dimension::Finalization,
+                        Outcome::LagBlocks(120),
+                    ),
+                    symbol_context(),
+                )
+                .is_empty()
+        );
     }
 }
 
 #[test]
 fn network_recovery_watermark_survives_restart_for_nodes_not_yet_seen() {
     let mut evaluator = IncidentEvaluator::default();
-    let sample = |site, second, stalled_references, stalled_minutes| NetworkFinalizationSample {
+    let sample = |site, second, stalled_references, stalled_blocks| NetworkFinalizationSample {
         network: Network::SymbolMainnet,
         site,
         expected_references: 5,
         responding_references: 4,
         stalled_references,
-        stalled_minutes,
+        stalled_blocks,
         observed_at: instant(second),
     };
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 120, 3, 60));
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 150, 3, 60));
-    let _ = evaluator.ingest_network_finalization(sample(Site::B, 180, 3, 60));
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 120, 3, 120));
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 150, 3, 120));
+    let _ = evaluator.ingest_network_finalization(sample(Site::B, 180, 3, 120));
     let _ = evaluator.ingest_network_finalization(sample(Site::A, 240, 0, 0));
     let _ = evaluator.ingest_network_finalization(sample(Site::B, 270, 0, 0));
 
@@ -1355,17 +1376,19 @@ fn network_recovery_watermark_survives_restart_for_nodes_not_yet_seen() {
     let snapshot: IncidentEvaluatorSnapshot = serde_json::from_value(snapshot).unwrap();
     let mut restarted = IncidentEvaluator::from_snapshot(snapshot).unwrap();
     for (site, second) in [(Site::A, 220), (Site::A, 250), (Site::B, 260)] {
-        assert!(restarted
-            .ingest_with_context(
-                observation(
-                    site,
-                    second,
-                    Dimension::Finalization,
-                    Outcome::FinalizationStalledMinutes(60),
-                ),
-                symbol_context(),
-            )
-            .is_empty());
+        assert!(
+            restarted
+                .ingest_with_context(
+                    observation(
+                        site,
+                        second,
+                        Dimension::Finalization,
+                        Outcome::LagBlocks(120),
+                    ),
+                    symbol_context(),
+                )
+                .is_empty()
+        );
     }
     assert!(matches!(
         restarted
@@ -1374,7 +1397,7 @@ fn network_recovery_watermark_survives_restart_for_nodes_not_yet_seen() {
                     Site::A,
                     300,
                     Dimension::Finalization,
-                    Outcome::FinalizationStalledMinutes(60),
+                    Outcome::LagBlocks(120),
                 ),
                 symbol_context(),
             )
@@ -1386,20 +1409,20 @@ fn network_recovery_watermark_survives_restart_for_nodes_not_yet_seen() {
 #[test]
 fn network_severity_escalation_also_requires_two_sites() {
     let mut evaluator = IncidentEvaluator::default();
-    let sample = |site, second, stalled_minutes| NetworkFinalizationSample {
+    let sample = |site, second, stalled_blocks| NetworkFinalizationSample {
         network: Network::SymbolMainnet,
         site,
         expected_references: 5,
         responding_references: 4,
         stalled_references: 3,
-        stalled_minutes,
+        stalled_blocks,
         observed_at: instant(second),
     };
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 0, 30));
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 30, 30));
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 0, 60));
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 30, 60));
     assert!(matches!(
         evaluator
-            .ingest_network_finalization(sample(Site::B, 60, 30))
+            .ingest_network_finalization(sample(Site::B, 60, 60))
             .as_slice(),
         [IncidentTransition::NetworkOpened {
             severity: Severity::Warning,
@@ -1408,7 +1431,7 @@ fn network_severity_escalation_also_requires_two_sites() {
     ));
     assert!(matches!(
         evaluator
-            .ingest_network_finalization(sample(Site::A, 90, 60))
+            .ingest_network_finalization(sample(Site::A, 90, 120))
             .as_slice(),
         [IncidentTransition::NetworkCandidateRecorded {
             site: Site::A,
@@ -1418,7 +1441,7 @@ fn network_severity_escalation_also_requires_two_sites() {
     ));
     assert!(matches!(
         evaluator
-            .ingest_network_finalization(sample(Site::B, 120, 60))
+            .ingest_network_finalization(sample(Site::B, 120, 120))
             .as_slice(),
         [IncidentTransition::Updated {
             severity: Severity::Critical,
@@ -1436,7 +1459,7 @@ fn network_finalization_requires_reference_quorum_and_two_site_recovery() {
         expected_references: 5,
         responding_references: 2,
         stalled_references: 2,
-        stalled_minutes: 60,
+        stalled_blocks: 120,
         observed_at: instant(0),
     };
     assert!(evaluator
@@ -1450,23 +1473,25 @@ fn network_finalization_requires_reference_quorum_and_two_site_recovery() {
         .ingest_network_finalization(newer_insufficient)
         .is_empty());
 
-    let sample = |site, second, stalled_references, stalled_minutes| NetworkFinalizationSample {
+    let sample = |site, second, stalled_references, stalled_blocks| NetworkFinalizationSample {
         network: Network::SymbolMainnet,
         site,
         expected_references: 5,
         responding_references: 4,
         stalled_references,
-        stalled_minutes,
+        stalled_blocks,
         observed_at: instant(second),
     };
-    assert!(evaluator
-        .ingest_network_finalization(sample(Site::A, 10, 3, 60))
-        .is_empty());
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 30, 3, 60));
-    let _ = evaluator.ingest_network_finalization(sample(Site::A, 60, 3, 60));
+    assert!(
+        evaluator
+            .ingest_network_finalization(sample(Site::A, 10, 3, 120))
+            .is_empty()
+    );
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 30, 3, 120));
+    let _ = evaluator.ingest_network_finalization(sample(Site::A, 60, 3, 120));
     assert!(matches!(
         evaluator
-            .ingest_network_finalization(sample(Site::B, 90, 3, 60))
+            .ingest_network_finalization(sample(Site::B, 90, 3, 120))
             .as_slice(),
         [IncidentTransition::NetworkOpened { .. }]
     ));
@@ -1667,7 +1692,7 @@ fn snapshot_rejects_open_network_and_node_finalization_for_the_same_network() {
                 site,
                 second,
                 Dimension::Finalization,
-                Outcome::FinalizationStalledMinutes(60),
+                Outcome::LagBlocks(120),
             ),
             symbol_context(),
         );
@@ -1681,7 +1706,7 @@ fn snapshot_rejects_open_network_and_node_finalization_for_the_same_network() {
         expected_references: 5,
         responding_references: 4,
         stalled_references: 3,
-        stalled_minutes: 60,
+        stalled_blocks: 120,
         observed_at: instant(second),
     };
     let _ = network.ingest_network_finalization(sample(Site::A, 120));
@@ -1705,7 +1730,7 @@ fn snapshot_rejects_open_network_and_node_finalization_for_the_same_network() {
                 Site::A,
                 second,
                 Dimension::Finalization,
-                Outcome::FinalizationStalledMinutes(60),
+                Outcome::LagBlocks(120),
             ),
             symbol_context(),
         );
@@ -1822,7 +1847,7 @@ fn snapshot_rejects_network_suppression_horizon_ahead_of_evidence() {
         expected_references: 5,
         responding_references: 4,
         stalled_references,
-        stalled_minutes: if stalled_references == 0 { 0 } else { 60 },
+        stalled_blocks: if stalled_references == 0 { 0 } else { 120 },
         observed_at: instant(second),
     };
     let _ = evaluator.ingest_network_finalization(sample(Site::A, 120, 3));
@@ -1856,7 +1881,7 @@ fn snapshot_rejects_network_suppression_horizon_ahead_of_evidence() {
                 Site::A,
                 second,
                 Dimension::Finalization,
-                Outcome::FinalizationStalledMinutes(60),
+                Outcome::LagBlocks(120),
             ),
             symbol_context(),
         );
